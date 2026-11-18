@@ -315,6 +315,33 @@ export class Tracker {
     return b[b.length >> 1];
   }
 
+  /**
+   * Ends the ride. If the train is still moving there is no closing stop to
+   * correct against, so the open segment is kept with the bias prior only.
+   * Returns that segment's result (with points) or null.
+   */
+  finish() {
+    const seg = this.seg;
+    let result = null;
+    if (this.state === 'moving' && this.F && seg && seg.samples.length > 1) {
+      result = integrateSegment(seg.samples, {
+        F: this.F, L: this.L, U: this.U0, gMag: this.gMag, rBias: seg.rBias,
+        map: GYRO_MAPS[this.gyroMap], p0: seg.p0, psi0: seg.psi0, theta0: seg.theta0,
+        thetaEnd: null, fixedBias: this.biasPrior, maxPitch: this.o.maxPitch, step: this.o.pointStep,
+      });
+      if (result.dist >= 1) {
+        this.path.push(...result.points.slice(1));
+        this.pos = result.points.at(-1).slice();
+        this.psi = result.psiEnd;
+        this.totalDist += result.dist;
+        this.segments.push({ ...result, points: undefined, t0: seg.t0, t1: this.lastT, open: true });
+      } else result = null;
+    }
+    this.state = 'finished';
+    this.seg = null; this.live = []; this.v = 0;
+    return result;
+  }
+
   /** Current speed for display (m/s), never negative. */
   get speed() { return this.state === 'moving' ? Math.max(this.v, 0) : 0; }
 }
@@ -373,7 +400,7 @@ export function integrateSegment(samples, c) {
     q += -dot(w, c.L) * dt;
     psi[i] = p; th[i] = q;
   }
-  const dTh = c.thetaEnd - th[n - 1];
+  const dTh = c.thetaEnd == null ? 0 : c.thetaEnd - th[n - 1];
   let v = 0;
   const vr = new Float64Array(n);
   for (let i = 0; i < n; i++) {
@@ -381,7 +408,9 @@ export function integrateSegment(samples, c) {
     v += (dot(samples[i].a, c.F) - c.gMag * Math.sin(th[i])) * dts[i];
     vr[i] = v;
   }
-  const bias = vr[n - 1] / T; // m/s² — residual accelerometer bias along the track
+  // m/s² — residual accelerometer bias along the track (ZUPT), or a given prior
+  // when the segment has no closing stop
+  const bias = c.fixedBias ?? vr[n - 1] / T;
   let pos = c.p0.slice(), d = 0, vmax = 0;
   const points = [pos.slice()];
   for (let i = 0; i < n; i++) {

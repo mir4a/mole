@@ -4,7 +4,7 @@ import * as THREE from '../vendor/three.module.min.js';
 import { OrbitControls } from '../vendor/OrbitControls.js';
 
 const COLORS = {
-  bg: 0x0b0f12, tunnel: 0xffb238, centre: 0xffd27a, live: 0xf2f5f7,
+  bg: 0x0b0f12, tunnel: 0xffb238, open: 0xb8c4cc, centre: 0xffd27a, live: 0xf2f5f7,
   platform: 0x4fd08a, grid: 0x24313a, gridMain: 0x3a4a56, train: 0xffffff,
 };
 
@@ -13,7 +13,7 @@ export class TunnelScene {
     this.vex = 1; // vertical exaggeration
     this.k = 1;   // visual scale of tube/platform/labels (grows in overview so they stay visible)
     this.mode = 'follow';
-    this.segments = []; // arrays of tracker-frame points
+    this.segments = []; // { points (tracker frame), open (no closing stop, uncorrected) }
     this.stops = [];
     this.livePts = [];
     this.trainPos = [0, 0, 0];
@@ -58,6 +58,10 @@ export class TunnelScene {
     this.liveLine = new THREE.Line(lg, new THREE.LineBasicMaterial({ color: COLORS.live, transparent: true, opacity: 0.9 }));
     this.liveLine.frustumCulled = false;
     this.scene.add(this.liveLine);
+    // the 1px line is near-invisible on phones, so the live path is also drawn as a tube
+    this.liveTube = null;
+    this.liveBuiltAt = 0;
+    this.liveMat = new THREE.MeshBasicMaterial({ color: COLORS.live, transparent: true, opacity: 0.85 });
 
     // train marker: a short glowing car body
     const car = new THREE.Mesh(
@@ -94,30 +98,32 @@ export class TunnelScene {
     this.addStop([0, 0, 0], 0, 0);
   }
 
-  addSegment(points) {
-    this.segments.push(points);
-    this.buildSegment(points);
+  addSegment(points, opts = {}) {
+    const seg = { points, open: !!opts.open };
+    this.segments.push(seg);
+    this.buildSegment(seg);
   }
 
-  buildSegment(points) {
+  buildSegment({ points, open }) {
     if (points.length < 2) return;
+    const color = open ? COLORS.open : COLORS.tunnel;
     const pts = points.map((p) => this.toThree(p));
     const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
     const lengthM = curve.getLength();
     const tube = new THREE.Mesh(
       new THREE.TubeGeometry(curve, Math.min(Math.max(Math.round(lengthM / 6), 8), 1500), 3 * this.k, 12, false),
       new THREE.MeshStandardMaterial({
-        color: COLORS.tunnel, emissive: COLORS.tunnel, emissiveIntensity: 0.12,
+        color, emissive: color, emissiveIntensity: 0.12,
         transparent: true, opacity: 0.34, side: THREE.DoubleSide, depthWrite: false, roughness: 0.6,
       })
     );
     const rings = new THREE.Mesh(
       new THREE.TubeGeometry(curve, Math.min(Math.max(Math.round(lengthM / 25), 4), 600), 3.05 * this.k, 10, false),
-      new THREE.MeshBasicMaterial({ color: COLORS.tunnel, wireframe: true, transparent: true, opacity: 0.18 })
+      new THREE.MeshBasicMaterial({ color, wireframe: true, transparent: true, opacity: 0.18 })
     );
     const centre = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints(pts),
-      new THREE.LineBasicMaterial({ color: COLORS.centre })
+      new THREE.LineBasicMaterial({ color: open ? COLORS.open : COLORS.centre })
     );
     this.tunnelGroup.add(tube, rings, centre);
   }
@@ -144,8 +150,12 @@ export class TunnelScene {
     this.stopGroup.add(g);
   }
 
-  setLive(points) {
+  setLive(points, force = false) {
+    const now = performance.now();
+    // the tracker appends to the same array, so compare against the count we last built
+    const grew = points !== this.livePts || points.length !== this.liveBuiltLen;
     this.livePts = points;
+    if (force || points.length < 2 || (grew && now - this.liveBuiltAt > 300)) this.buildLiveTube(points, now);
     const n = Math.min(points.length, this.liveMax);
     const arr = this.liveLine.geometry.attributes.position.array;
     for (let i = 0; i < n; i++) {
@@ -154,6 +164,24 @@ export class TunnelScene {
     }
     this.liveLine.geometry.attributes.position.needsUpdate = true;
     this.liveLine.geometry.setDrawRange(0, n);
+  }
+
+  buildLiveTube(points, now) {
+    this.liveBuiltAt = now;
+    this.liveBuiltLen = points.length;
+    if (this.liveTube) {
+      this.scene.remove(this.liveTube);
+      this.liveTube.geometry.dispose();
+      this.liveTube = null;
+    }
+    if (points.length < 2) return;
+    const step = Math.max(1, Math.ceil(points.length / 600));
+    const pts = points.filter((_, i) => i % step === 0 || i === points.length - 1).map((p) => this.toThree(p));
+    if (pts.length < 2) return;
+    const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
+    this.liveTube = new THREE.Mesh(new THREE.TubeGeometry(curve, pts.length * 2, 1.6 * this.k, 6, false), this.liveMat);
+    this.liveTube.frustumCulled = false;
+    this.scene.add(this.liveTube);
   }
 
   setTrain(pos, heading) {
@@ -175,7 +203,7 @@ export class TunnelScene {
     for (const s of this.segments) this.buildSegment(s);
     const stops = this.stops; this.stops = [];
     for (const s of stops) this.addStop(s.p, s.n, s.heading);
-    this.setLive(this.livePts);
+    this.setLive(this.livePts, true);
   }
 
   setMode(mode) {
@@ -192,14 +220,15 @@ export class TunnelScene {
   extent() {
     const box = new THREE.Box3();
     box.expandByPoint(this.toThree(this.trainPos));
-    for (const s of this.segments) for (const p of s) box.expandByPoint(this.toThree(p));
+    for (const s of this.segments) for (const p of s.points) box.expandByPoint(this.toThree(p));
+    for (const p of this.livePts) box.expandByPoint(this.toThree(p));
     return box.getSize(new THREE.Vector3()).length();
   }
 
   fitAll() {
     const box = new THREE.Box3();
     box.expandByPoint(this.toThree(this.trainPos));
-    for (const s of this.segments) for (const p of s) box.expandByPoint(this.toThree(p));
+    for (const s of this.segments) for (const p of s.points) box.expandByPoint(this.toThree(p));
     for (const p of this.livePts) box.expandByPoint(this.toThree(p));
     const c = box.getCenter(new THREE.Vector3());
     const size = Math.max(box.getSize(new THREE.Vector3()).length(), 200);

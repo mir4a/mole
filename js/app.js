@@ -253,6 +253,8 @@ async function finishRide() {
   }
   mode = 'done';
   ui.debug.hidden = true;
+  const open = tracker.finish();
+  if (open) scene.addSegment(open.points, { open: true });
   scene.setLive([]);
   scene.setMode('overview');
   scene.setAutoRotate(true);
@@ -265,14 +267,21 @@ async function finishRide() {
 function showSummary() {
   const tr = tracker;
   const segs = tr.stops.slice(1);
+  const open = tr.segments.find((s) => s.open);
   const total = tr.totalDist;
-  const dur = segs.reduce((s, x) => s + x.dur, 0);
-  $('done-summary').innerHTML = segs.length
-    ? `<p class="num">${plural(segs.length, 'segment', 'segments')} · ${fmtDist(total)} · ${fmtTime(dur)} in motion</p>`
+  const dur = segs.reduce((s, x) => s + x.dur, 0) + (open ? open.dur : 0);
+  const n = segs.length + (open ? 1 : 0);
+  const openNote = open
+    ? '<p class="note">The last segment (grey) has no closing stop, so its speed drift was not corrected.</p>'
+    : '';
+  $('done-summary').innerHTML = n
+    ? `<p class="num">${plural(n, 'segment', 'segments')} · ${fmtDist(total)} · ${fmtTime(dur)} in motion</p>${openNote}`
     : '<p class="note">No segments recorded. The train has to leave a station and stop again.</p>';
-  $('done-table').innerHTML = segs.length
+  const row = (label, s) => `<tr class="num"><td>${label}</td><td>${fmtDist(s.dist)}</td><td>${fmtTime(s.dur)}</td><td>${Math.round(s.vmax * 3.6)} km/h</td></tr>`;
+  $('done-table').innerHTML = n
     ? '<tr><th>Segment</th><th>Length</th><th>Time</th><th>Top speed</th></tr>' +
-      segs.map((s, i) => `<tr class="num"><td>${i} → ${i + 1}</td><td>${fmtDist(s.dist)}</td><td>${fmtTime(s.dur)}</td><td>${Math.round(s.vmax * 3.6)} km/h</td></tr>`).join('')
+      segs.map((s, i) => row(`${i} → ${i + 1}`, s)).join('') +
+      (open ? row(`${segs.length} → no stop`, open) : '')
     : '';
   $('share-note').textContent = rec
     ? 'The recording keeps the raw sensor data: you can open it here again or send it over to tune the algorithm.'
@@ -431,7 +440,7 @@ function updateHud() {
   const live = moving && tr.seg ? tr.seg.liveDist : 0;
   ui.dist.textContent = fmtDist(tr.totalDist + live);
   ui.stops.textContent = tr.stops.length - 1;
-  const st = recal ? ['Calibrating', 'seeking'] : !moving ? ['Stopped', 'stopped'] : tr.F ? ['Moving', 'moving'] : ['Finding forward', 'seeking'];
+  const st = mode === 'done' ? ['Finished', 'stopped'] : recal ? ['Calibrating', 'seeking'] : !moving ? ['Stopped', 'stopped'] : tr.F ? ['Moving', 'moving'] : ['Finding forward', 'seeking'];
   ui.state.textContent = st[0];
   ui.state.className = 'chip ' + st[1];
   if (mode === 'live' && tr.movedAlert && !moving) $('btn-recal').hidden = false;
