@@ -38,7 +38,10 @@ const DEFAULTS = {
   winSec: 1.0,        // vibration window
   departAcc: 0.18,    // m/s², low-passed horizontal accel that means "we started"
   departHold: 0.4,    // s it must persist
-  minStillSec: 1.2,   // s of quiet before calling it a stop
+  minStillSec: 1.5,   // s of quiet + no acceleration before calling it a stop
+  stopAcc: 0.2,       // m/s², horizontal accel allowed at a (level) stop
+  slopeAcc: 0.45,     // m/s², allowed when standing on a grade (~4.5 %) ...
+  slopeStillSec: 6,   // ... if it lasts this long
   lockSec: 1.5,       // s of strong accel needed to lock the forward axis
   maxPitch: 4.5 * DEG,
   moveRate: 0.6,      // rad/s; faster rotation means the phone itself was moved
@@ -88,7 +91,7 @@ export class Tracker {
     this.lpA = st.meanA.slice();
     this.lpR = [0, 0, 0];
     this.lastT = samples.at(-1)?.t ?? null;
-    this.departT = 0; this.loudT = 0; this.quietT = 0;
+    this.departT = 0; this.loudT = 0; this.quietT = 0; this.stillT = 0; this.slopeT = 0;
     this.seg = null;
     this.live = [];
     this.calibrated = true;
@@ -127,6 +130,7 @@ export class Tracker {
     this.hMag = len(h);
 
     const w = scale(GYRO_MAPS[this.gyroMap](rRaw), DEG);
+    if (len(w) > o.moveRate && this.seg) this.seg.handled = true; // a train never turns this fast
     if (len(w) > o.moveRate && !this.movedAlert) {
       this.movedAlert = true;
       this.events.push({ type: 'moved', t: s.t });
@@ -135,6 +139,10 @@ export class Tracker {
     const thr = this.stillThreshold;
     const quiet = this.winStd < thr;
     this.quietT = quiet ? this.quietT + dt : 0;
+    // Smooth acceleration and braking are quiet too, so a stop also needs
+    // the horizontal acceleration to be gone (measured on a real ride).
+    this.stillT = quiet && this.hMag < o.stopAcc ? this.stillT + dt : 0;
+    this.slopeT = quiet && this.hMag < o.slopeAcc ? this.slopeT + dt : 0;
 
     if (this.state === 'stopped') {
       if (quiet) {
@@ -172,8 +180,8 @@ export class Tracker {
     }
 
     const segDur = s.t - this.seg.t0;
-    if (segDur > 3 && this.quietT >= o.minStillSec && (Math.abs(this.v) < 4 || this.quietT >= 4)) {
-      this.endSegment(s.t - this.quietT);
+    if (segDur > 3 && (this.stillT >= o.minStillSec || this.slopeT >= o.slopeStillSec)) {
+      this.endSegment(s.t - (this.stillT >= o.minStillSec ? this.stillT : this.slopeT));
     }
   }
 
@@ -203,9 +211,9 @@ export class Tracker {
 
   stepLive(s, w, dt) {
     const r = dot(w, this.U0);
-    const q = -dot(w, this.L);
     this.psi += r * dt;
-    this.theta = clamp(this.theta + q * dt, -this.o.maxPitch, this.o.maxPitch);
+    // pitch stays at the departure station's value while moving: on a real ride
+    // the phone gyro showed ~0.15°/s of false pitch rate under vibration
     // live view only: subtract the accelerometer bias learned on earlier segments
     const aF = dot(s.a, this.F) - this.gMag * Math.sin(this.theta) - this.biasPrior;
     this.v += aF * dt;
@@ -278,9 +286,9 @@ export class Tracker {
     this.v = 0;
     this.live = [];
     this.seg = null;
-    this.quietT = 0;
+    this.quietT = this.stillT = this.slopeT = 0;
 
-    if (!result || result.dist < this.o.minSegDist || result.vmax < 1) {
+    if (!result || seg.handled || result.dist < this.o.minSegDist || result.vmax < 1) {
       // false departure: roll back to the stop position
       this.pos = seg.p0.slice(); this.psi = seg.psi0; this.theta = this.thetaStation;
       this.events.push({ type: 'cancel', t: tStop });
@@ -311,35 +319,58 @@ export class Tracker {
 
   get biasPrior() {
     if (!this.segments?.length) return 0;
-    const b = this.segments.map((s) => s.bias).sort((x, y) => x - y);
-    return b[b.length >> 1];
+    const b = this.segments.filter((s) => !s.open).map((s) => s.bias).sort((x, y) => x - y);
+    if (!b.length) return 0;
+    return clamp(b[b.length >> 1], -0.15, 0.15);
   }
 
   /**
-   * Ends the ride. If the train is still moving there is no closing stop to
-   * correct against, so the open segment is kept with the bias prior only.
-   * Returns that segment's result (with points) or null.
+   * Ends the ride. Returns { points, arrived } for a segment closed by this
+   * call, or null.
+   *  - If the phone was picked up during the segment, that segment is dropped.
+   *  - If the train is braking, Finish counts as the arrival: the segment gets
+   *    the v=0 correction, so the user need not wait for a full stop.
+   *  - Otherwise the segment is kept open with only the bias prior.
    */
   finish() {
     const seg = this.seg;
-    let result = null;
-    if (this.state === 'moving' && this.F && seg && seg.samples.length > 1) {
-      result = integrateSegment(seg.samples, {
+    let out = null;
+    if (this.state === 'moving' && seg?.handled) {
+      this.pos = seg.p0.slice(); this.psi = seg.psi0;
+      this.events.push({ type: 'handled', t: this.lastT });
+    } else if (this.state === 'moving' && this.F && seg && seg.samples.length > 1) {
+      const arrived = this.isBraking(seg);
+      const result = integrateSegment(seg.samples, {
         F: this.F, L: this.L, U: this.U0, gMag: this.gMag, rBias: seg.rBias,
         map: GYRO_MAPS[this.gyroMap], p0: seg.p0, psi0: seg.psi0, theta0: seg.theta0,
-        thetaEnd: null, fixedBias: this.biasPrior, maxPitch: this.o.maxPitch, step: this.o.pointStep,
+        thetaEnd: null, fixedBias: arrived ? undefined : this.biasPrior,
+        maxPitch: this.o.maxPitch, step: this.o.pointStep,
       });
-      if (result.dist >= 1) {
+      if (result.dist >= this.o.minSegDist) {
         this.path.push(...result.points.slice(1));
         this.pos = result.points.at(-1).slice();
         this.psi = result.psiEnd;
         this.totalDist += result.dist;
-        this.segments.push({ ...result, points: undefined, t0: seg.t0, t1: this.lastT, open: true });
-      } else result = null;
+        this.segments.push({ ...result, points: undefined, t0: seg.t0, t1: this.lastT, open: !arrived });
+        if (arrived) {
+          this.stops.push({ p: this.pos.slice(), t: this.lastT, dwell: 0, n: this.stops.length, dist: result.dist, dur: result.dur, vmax: result.vmax, bias: result.bias });
+        }
+        out = { points: result.points, arrived, stop: arrived ? this.stops.at(-1) : null };
+      }
     }
     this.state = 'finished';
     this.seg = null; this.live = []; this.v = 0;
-    return result;
+    return out;
+  }
+
+  /** Mean forward acceleration over the last 3 s is clearly negative. */
+  isBraking(seg) {
+    const tEnd = seg.samples.at(-1).t;
+    const tail = seg.samples.filter((x) => x.t >= tEnd - 3);
+    if (tail.length < 10) return false;
+    const g = this.gMag * Math.sin(seg.theta0);
+    const a = tail.reduce((sum, x) => sum + dot(x.a, this.F) - g, 0) / tail.length - this.biasPrior;
+    return a < -0.25;
   }
 
   /** Current speed for display (m/s), never negative. */
@@ -382,14 +413,14 @@ export function stillStats(samples) {
 
 /**
  * Re-integrates one stop-to-stop segment with the ZUPT constraints:
- * pitch drift is spread linearly so that it ends at the pitch measured at the stop,
+ * the grade is interpolated between the pitches measured from gravity at both stops,
  * speed drift is spread linearly so that it ends at exactly 0.
  */
 export function integrateSegment(samples, c) {
   const n = samples.length;
   const t0 = samples[0].t, T = Math.max(samples[n - 1].t - t0, 1e-3);
   const psi = new Float64Array(n), th = new Float64Array(n), dts = new Float64Array(n);
-  let p = c.psi0, q = c.theta0;
+  let p = c.psi0;
   for (let i = 0; i < n; i++) {
     const s = samples[i];
     const dt = i ? clamp(s.t - samples[i - 1].t, 0, 0.1) : 0;
@@ -397,14 +428,15 @@ export function integrateSegment(samples, c) {
     const rr = s.r ? sub(s.r, c.rBias) : [0, 0, 0];
     const w = scale(c.map(rr), DEG);
     p += dot(w, c.U) * dt;
-    q += -dot(w, c.L) * dt;
-    psi[i] = p; th[i] = q;
+    psi[i] = p;
   }
-  const dTh = c.thetaEnd == null ? 0 : c.thetaEnd - th[n - 1];
+  // Grade: interpolated between the two stops, where it is measured from gravity.
+  // The gyro's pitch rate is not trusted (vibration makes it drift).
+  const thEnd = c.thetaEnd ?? c.theta0;
   let v = 0;
   const vr = new Float64Array(n);
   for (let i = 0; i < n; i++) {
-    th[i] = clamp(th[i] + dTh * (samples[i].t - t0) / T, -c.maxPitch, c.maxPitch);
+    th[i] = clamp(c.theta0 + (thEnd - c.theta0) * (samples[i].t - t0) / T, -c.maxPitch, c.maxPitch);
     v += (dot(samples[i].a, c.F) - c.gMag * Math.sin(th[i])) * dts[i];
     vr[i] = v;
   }

@@ -253,8 +253,11 @@ async function finishRide() {
   }
   mode = 'done';
   ui.debug.hidden = true;
-  const open = tracker.finish();
-  if (open) scene.addSegment(open.points, { open: true });
+  const last = tracker.finish();
+  if (last) {
+    scene.addSegment(last.points, { open: !last.arrived });
+    if (last.arrived) scene.addStop(last.stop.p, last.stop.n, tracker.psi);
+  }
   scene.setLive([]);
   scene.setMode('overview');
   scene.setAutoRotate(true);
@@ -393,6 +396,9 @@ function handleEvents() {
         toast(`Stop ${s.n}: ${fmtDist(s.dist)} in ${fmtTime(s.dur)}, top ${Math.round(s.vmax * 3.6)} km/h`, 'good', 7000);
         break;
       }
+      case 'handled':
+        toast('The phone was picked up, so that last stretch was dropped.');
+        break;
       case 'cancel':
         toast('That was a jolt, not a departure. The path is unchanged.');
         scene.setLive([]);

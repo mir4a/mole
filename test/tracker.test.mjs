@@ -31,4 +31,19 @@ for (const c of cases) {
   console.log(`  worst length error ${(worstLen * 100).toFixed(1)}%, worst drift ${(worstPos * 100).toFixed(1)}% of distance → ${ok ? 'OK' : 'FAIL'}`);
   if (!ok) failed++;
 }
+
+// Finish pressed while the train is still braking into the last station:
+// it should count as the arrival and get the v=0 correction.
+{
+  const { recording, trackLengths } = simulateRide({ seed: 21, dwell: 25 });
+  const hz = recording.hz;
+  const cut = { ...recording, samples: recording.samples.slice(0, recording.samples.length - (25 + 2) * hz) };
+  const tr = replayRecording(cut);
+  const last = tr.finish();
+  const truth = trackLengths.at(-1);
+  const err = last ? Math.abs(tr.segments.at(-1).dist - truth) / truth : 1;
+  const ok = last?.arrived && err < 0.12;
+  console.log(`\n# finish while braking: arrived=${last?.arrived}, last segment ${tr.segments.at(-1)?.dist.toFixed(0)} m vs ${truth.toFixed(0)} m → ${ok ? 'OK' : 'FAIL'}`);
+  if (!ok) failed++;
+}
 process.exit(failed ? 1 : 0);
