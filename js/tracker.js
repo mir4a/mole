@@ -49,9 +49,26 @@ const DEFAULTS = {
   pointStep: 2,       // m between stored path points
 };
 
+// Per-vehicle tuning on top of DEFAULTS (which are tuned for the metro).
+export const PROFILES = {
+  metro: {},
+  bus: {
+    departAcc: 0.25,       // idling engine shakes more than a train at a platform
+    departHold: 0.3,
+    minStillSec: 1.0,      // traffic-light stops can be short
+    stopAcc: 0.3,
+    slopeAcc: 0.8,         // stops on hills, up to ~8 %
+    slopeStillSec: 4,
+    maxPitch: 10 * DEG,    // street grades are much steeper than metro ones
+    moveRate: 1.2,         // a bus turns at up to ~30°/s; a hand moves a phone faster
+    minSegDist: 8,
+  },
+};
+
 export class Tracker {
   constructor(opts = {}) {
-    this.o = { ...DEFAULTS, ...opts };
+    this.profile = PROFILES[opts.profile] ? opts.profile : 'metro';
+    this.o = { ...DEFAULTS, ...PROFILES[this.profile], ...opts };
     this.calibrated = false;
     this.events = [];
   }
@@ -171,7 +188,7 @@ export class Tracker {
       e[1] += dot(lw, lw) * dt;
     }
 
-    this.accumulateF(h, dt);
+    this.accumulateF(h, dt, len(w));
     if (!this.F && this.fStats.time >= o.lockSec) {
       this.lockF();
       this.replayLive();
@@ -187,7 +204,10 @@ export class Tracker {
 
   // ---------- forward axis ----------
 
-  accumulateF(h, dt) {
+  accumulateF(h, dt, rate) {
+    // Only straight-line samples: in a turn the centripetal acceleration points
+    // sideways and, on a bus, is as strong as the acceleration along the road.
+    if (rate > 2 * DEG) return;
     const c1 = dot(h, this.E1), c2 = dot(h, this.E2);
     if (Math.hypot(c1, c2) < this.o.departAcc * 0.8) return;
     const f = this.fStats;
@@ -464,7 +484,7 @@ export function integrateSegment(samples, c) {
  */
 export function createFeeder(rec, opts) {
   const samples = rec.samples.map(unpackSample);
-  const tr = new Tracker(opts);
+  const tr = new Tracker({ profile: rec.profile, ...opts });
   const calN = Math.min(Math.max(rec.calibrationCount || 0, 30), samples.length);
   tr.calibrate(samples.slice(0, calN));
   const recals = (rec.marks || []).filter((m) => m.type === 'recal').sort((a, b) => a.from - b.from);

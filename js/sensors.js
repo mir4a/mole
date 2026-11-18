@@ -44,6 +44,23 @@ export function startMotion(onSample) {
   return { stats, stop: () => window.removeEventListener('devicemotion', handler) };
 }
 
+/**
+ * Watches GPS. onFix([t_ms, lat, lon, accuracy, speed, heading]) with t on the
+ * same clock as the motion samples. onError(message) when it can't run.
+ */
+export function startGeo(onFix, onError) {
+  if (!('geolocation' in navigator)) { onError?.('unsupported'); return { stop() {} }; }
+  const id = navigator.geolocation.watchPosition(
+    (p) => {
+      const c = p.coords;
+      onFix([Math.round(performance.now()), c.latitude, c.longitude, c.accuracy, c.speed, c.heading]);
+    },
+    (e) => onError?.(e.code === 1 ? 'denied' : 'unavailable'),
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
+  );
+  return { stop: () => navigator.geolocation.clearWatch(id) };
+}
+
 /** Keeps the screen on while the page is visible. Re-acquires after tab switches. */
 export function keepAwake() {
   let lock = null, wanted = true;

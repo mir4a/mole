@@ -1,13 +1,16 @@
 // node test/tracker.test.mjs — runs synthetic rides through the tracker and
 // compares stop-to-stop distances and stop positions with ground truth.
-import { simulateRide } from '../js/sim.js';
+import { simulateRide, BUS_OPTS } from '../js/sim.js';
 import { replayRecording } from '../js/tracker.js';
+import { gpsReference, gpsDistance } from '../js/gps.js';
 
 const cases = [
   { name: 'phone leaning on window, spec gyro', opts: {} },
   { name: 'phone flat on seat, rotated 120°', opts: { phone: { yaw: 120, pitch: 0, roll: 0 }, seed: 3 } },
   { name: 'old WebKit gyro axis order', opts: { gyroMap: 'xyz', seed: 11 } },
   { name: 'big accel bias 0.1 m/s²', opts: { accBias: [0.1, -0.1, 0.1], seed: 5 } },
+  { name: 'city bus, phone on the seat', opts: { ...BUS_OPTS, phone: { yaw: 70, pitch: 0, roll: 0 }, seed: 9 } },
+  { name: 'city bus, phone on the window, iOS gyro order', opts: { ...BUS_OPTS, gyroMap: 'xyz', seed: 4 } },
 ];
 
 let failed = 0;
@@ -44,6 +47,21 @@ for (const c of cases) {
   const err = last ? Math.abs(tr.segments.at(-1).dist - truth) / truth : 1;
   const ok = last?.arrived && err < 0.12;
   console.log(`\n# finish while braking: arrived=${last?.arrived}, last segment ${tr.segments.at(-1)?.dist.toFixed(0)} m vs ${truth.toFixed(0)} m → ${ok ? 'OK' : 'FAIL'}`);
+  if (!ok) failed++;
+}
+// Bus ride with simulated GPS: the GPS track must line up with the sensor
+// track and give comparable segment lengths.
+{
+  const { recording, trackLengths } = simulateRide({ ...BUS_OPTS, gps: true, seed: 12 });
+  const tr = replayRecording(recording);
+  const calT = recording.samples[recording.calibrationCount - 1][0] / 1000;
+  const ref = gpsReference(recording.gps, tr, calT);
+  const gpsLens = tr.segments.map((s) => gpsDistance(ref.local, s.t0, s.t1));
+  const worst = Math.max(...gpsLens.map((g, i) => Math.abs(g - trackLengths[i]) / trackLengths[i]));
+  const lastStop = tr.stops.at(-1).p, lastGps = ref.points.at(-1);
+  const endGap = Math.hypot(lastStop[0] - lastGps[0], lastStop[1] - lastGps[1]);
+  const ok = ref.aligned && worst < 0.1;
+  console.log(`\n# bus GPS reference: aligned=${ref.aligned}, GPS segment lengths within ${(worst * 100).toFixed(1)}% of truth, sensor/GPS end gap ${endGap.toFixed(0)} m → ${ok ? 'OK' : 'FAIL'}`);
   if (!ok) failed++;
 }
 process.exit(failed ? 1 : 0);

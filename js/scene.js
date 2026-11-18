@@ -4,7 +4,7 @@ import * as THREE from '../vendor/three.module.min.js';
 import { OrbitControls } from '../vendor/OrbitControls.js';
 
 const COLORS = {
-  bg: 0x0b0f12, tunnel: 0xffb238, open: 0xb8c4cc, centre: 0xffd27a, live: 0xf2f5f7,
+  bg: 0x0b0f12, tunnel: 0xffb238, open: 0xb8c4cc, gps: 0x5aa9ff, centre: 0xffd27a, live: 0xf2f5f7,
   platform: 0x4fd08a, grid: 0x24313a, gridMain: 0x3a4a56, train: 0xffffff,
 };
 
@@ -62,6 +62,10 @@ export class TunnelScene {
     this.liveTube = null;
     this.liveBuiltAt = 0;
     this.liveMat = new THREE.MeshBasicMaterial({ color: COLORS.live, transparent: true, opacity: 0.85 });
+    // GPS reference track (bus mode)
+    this.gpsPts = [];
+    this.gpsMesh = null;
+    this.gpsMat = new THREE.MeshBasicMaterial({ color: COLORS.gps, transparent: true, opacity: 0.8 });
 
     // train marker: a short glowing car body
     const car = new THREE.Mesh(
@@ -92,7 +96,7 @@ export class TunnelScene {
   }
 
   clear() {
-    this.segments = []; this.stops = []; this.livePts = [];
+    this.segments = []; this.stops = []; this.livePts = []; this.gpsPts = [];
     this.trainPos = [0, 0, 0]; this.heading = 0;
     this.rebuild();
     this.addStop([0, 0, 0], 0, 0);
@@ -184,6 +188,22 @@ export class TunnelScene {
     this.scene.add(this.liveTube);
   }
 
+  setGps(points) {
+    this.gpsPts = points;
+    if (this.gpsMesh) {
+      this.scene.remove(this.gpsMesh);
+      this.gpsMesh.geometry.dispose();
+      this.gpsMesh = null;
+    }
+    if (points.length < 2) return;
+    const step = Math.max(1, Math.ceil(points.length / 800));
+    const pts = points.filter((_, i) => i % step === 0 || i === points.length - 1).map((p) => this.toThree(p));
+    const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
+    this.gpsMesh = new THREE.Mesh(new THREE.TubeGeometry(curve, pts.length * 2, 1.0 * this.k, 5, false), this.gpsMat);
+    this.gpsMesh.frustumCulled = false;
+    this.scene.add(this.gpsMesh);
+  }
+
   setTrain(pos, heading) {
     this.trainPos = pos;
     this.heading = heading;
@@ -204,6 +224,7 @@ export class TunnelScene {
     const stops = this.stops; this.stops = [];
     for (const s of stops) this.addStop(s.p, s.n, s.heading);
     this.setLive(this.livePts, true);
+    this.setGps(this.gpsPts);
   }
 
   setMode(mode) {
@@ -222,6 +243,7 @@ export class TunnelScene {
     box.expandByPoint(this.toThree(this.trainPos));
     for (const s of this.segments) for (const p of s.points) box.expandByPoint(this.toThree(p));
     for (const p of this.livePts) box.expandByPoint(this.toThree(p));
+    for (const p of this.gpsPts) box.expandByPoint(this.toThree(p));
     return box.getSize(new THREE.Vector3()).length();
   }
 
@@ -230,6 +252,7 @@ export class TunnelScene {
     box.expandByPoint(this.toThree(this.trainPos));
     for (const s of this.segments) for (const p of s.points) box.expandByPoint(this.toThree(p));
     for (const p of this.livePts) box.expandByPoint(this.toThree(p));
+    for (const p of this.gpsPts) box.expandByPoint(this.toThree(p));
     const c = box.getCenter(new THREE.Vector3());
     const size = Math.max(box.getSize(new THREE.Vector3()).length(), 200);
     this.controls.target.copy(c);

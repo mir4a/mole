@@ -1,7 +1,8 @@
 import { Tracker, createFeeder, packSample, unpackSample, stillStats } from './tracker.js';
-import { requestMotionPermission, startMotion, keepAwake, motionSupported } from './sensors.js';
+import { requestMotionPermission, startMotion, keepAwake, motionSupported, startGeo } from './sensors.js';
 import { TunnelScene } from './scene.js';
-import { simulateRide } from './sim.js';
+import { simulateRide, BUS_OPTS } from './sim.js';
+import { gpsReference, gpsDistance, gpsSpeed } from './gps.js';
 import * as store from './store.js';
 
 const $ = (id) => document.getElementById(id);
@@ -30,6 +31,11 @@ let rec = null;             // current recording { meta, rows, marks }
 let feeder = null, playT = 0;
 let flushTimer = null, flushedRows = 0, chunkIdx = 0;
 let lastFrame = performance.now();
+let vehicle = 'metro';      // metro | bus (tracker profile)
+let geo = null;             // GPS watch (bus mode)
+let gpsFixes = [];          // [t_ms, lat, lon, acc, speed, heading]
+let gpsRef = null;          // GPS track in the tracker's frame
+let gpsCheckedAt = 0, calibT = 0;
 
 // ---------------- formatting ----------------
 const nf1 = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1, minimumFractionDigits: 1 });
@@ -37,6 +43,21 @@ const nf2 = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2, minimumFr
 const fmtDist = (m) => (m < 1000 ? `${Math.round(m)} m` : `${nf2.format(m / 1000)} km`);
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+// ---------------- vehicle ----------------
+function setVehicle(v) {
+  vehicle = v === 'bus' ? 'bus' : 'metro';
+  try { localStorage.setItem('mole.vehicle', vehicle); } catch {}
+  $('veh-metro').setAttribute('aria-checked', String(vehicle === 'metro'));
+  $('veh-bus').setAttribute('aria-checked', String(vehicle === 'bus'));
+  for (const el of document.querySelectorAll('[data-bus]')) {
+    if (!el.dataset.metro) el.dataset.metro = el.textContent;
+    el.textContent = vehicle === 'bus' ? el.dataset.bus : el.dataset.metro;
+  }
+}
+$('veh-metro').addEventListener('click', () => setVehicle('metro'));
+$('veh-bus').addEventListener('click', () => setVehicle('bus'));
+try { setVehicle(localStorage.getItem('mole.vehicle') || 'metro'); } catch { setVehicle('metro'); }
 
 // ---------------- step 1: offline ----------------
 (async function offline() {
@@ -132,6 +153,13 @@ ui.start.addEventListener('click', () => {
   calibBuf = [];
   ui.start.disabled = true;
   setStatus(ui.calibStatus, "Don't touch the phone…");
+  gpsFixes = []; gpsRef = null;
+  if (vehicle === 'bus' && !geo) {
+    geo = startGeo((fix) => gpsFixes.push(fix), (err) => {
+      geo = null;
+      toast(err === 'denied' ? 'No location access: the GPS comparison is off.' : 'GPS is unavailable: the comparison is off.', 'warn');
+    });
+  }
 });
 
 function calibrateStep(tMs, a, r) {
@@ -149,13 +177,14 @@ function calibrateStep(tMs, a, r) {
   if (span < CALIB_SEC) return;
 
   // calibrated: start the live ride
-  tracker = new Tracker();
+  tracker = new Tracker({ profile: vehicle });
   const rows = calibBuf.map((x) => packSample(x.tMs, x.a, x.r));
+  calibT = rows.at(-1)[0] / 1000;
   tracker.calibrate(rows.map(unpackSample));
   rec = {
-    rows, marks: [],
+    rows, marks: [], gps: gpsFixes,
     meta: {
-      id: Date.now(), version: 1, kind: 'live', startedAt: new Date().toISOString(),
+      id: Date.now(), version: 1, kind: 'live', profile: vehicle, startedAt: new Date().toISOString(),
       userAgent: navigator.userAgent, hz: motion.stats.hz, calibrationCount: rows.length,
     },
   };
@@ -164,7 +193,7 @@ function calibrateStep(tMs, a, r) {
   flushTimer = setInterval(flush, 5000);
   mode = 'live';
   enterRide(false);
-  toast('Calibrated. Waiting for the train to leave.');
+  toast(vehicle === 'bus' ? 'Calibrated. Waiting for the bus to pull away.' : 'Calibrated. Waiting for the train to leave.');
 }
 
 async function flush() {
@@ -174,7 +203,7 @@ async function flush() {
   flushedRows += rows.length;
   await store.appendChunk(rec.meta.id, chunkIdx++, rows);
   await store.saveRideMeta({
-    ...rec.meta, marks: rec.marks, sampleCount: flushedRows,
+    ...rec.meta, marks: rec.marks, gps: rec.gps, sampleCount: flushedRows,
     stops: tracker ? tracker.stops.length - 1 : 0, dist: tracker ? tracker.totalDist : 0,
   });
 }
@@ -237,7 +266,7 @@ $('btn-new').addEventListener('click', () => {
   ui.ride.hidden = true;
   ui.setup.hidden = false;
   mode = 'idle';
-  tracker = null; feeder = null; rec = null;
+  tracker = null; feeder = null; rec = null; gpsFixes = []; gpsRef = null;
   scene.setAutoRotate(false);
   ui.start.disabled = !motion?.stats.hasAccel;
   ui.ring.style.strokeDashoffset = 144.5;
@@ -250,6 +279,7 @@ async function finishRide() {
     clearInterval(flushTimer);
     await flush();
     wake?.release(); wake = null;
+    geo?.stop(); geo = null;
   }
   mode = 'done';
   ui.debug.hidden = true;
@@ -259,6 +289,7 @@ async function finishRide() {
     if (last.arrived) scene.addStop(last.stop.p, last.stop.n, tracker.psi);
   }
   scene.setLive([]);
+  updateGps(true);
   scene.setMode('overview');
   scene.setAutoRotate(true);
   setBarPhase('done');
@@ -269,22 +300,31 @@ async function finishRide() {
 
 function showSummary() {
   const tr = tracker;
-  const segs = tr.stops.slice(1);
-  const open = tr.segments.find((s) => s.open);
+  const segs = tr.segments;
+  const open = segs.find((s) => s.open);
   const total = tr.totalDist;
-  const dur = segs.reduce((s, x) => s + x.dur, 0) + (open ? open.dur : 0);
-  const n = segs.length + (open ? 1 : 0);
+  const dur = segs.reduce((s, x) => s + x.dur, 0);
+  const n = segs.length;
+  const gps = gpsRef?.aligned ? gpsRef.local : null;
+  const pct = (est, ref) => `${est >= ref ? '+' : '−'}${Math.round(Math.abs(est / ref - 1) * 100)}%`;
+  const gpsTotal = gps ? segs.reduce((s, x) => s + gpsDistance(gps, x.t0, x.t1), 0) : 0;
+  const gpsLine = gps && gpsTotal > 50
+    ? `<p class="num"><span class="gps-dot"></span>GPS ${fmtDist(gpsTotal)}: sensors are ${pct(total, gpsTotal)} off</p>`
+    : '';
   const openNote = open
     ? '<p class="note">The last segment (grey) has no closing stop, so its speed drift was not corrected.</p>'
     : '';
   $('done-summary').innerHTML = n
-    ? `<p class="num">${plural(n, 'segment', 'segments')} · ${fmtDist(total)} · ${fmtTime(dur)} in motion</p>${openNote}`
-    : '<p class="note">No segments recorded. The train has to leave a station and stop again.</p>';
-  const row = (label, s) => `<tr class="num"><td>${label}</td><td>${fmtDist(s.dist)}</td><td>${fmtTime(s.dur)}</td><td>${Math.round(s.vmax * 3.6)} km/h</td></tr>`;
+    ? `<p class="num">${plural(n, 'segment', 'segments')} · ${fmtDist(total)} · ${fmtTime(dur)} in motion</p>${gpsLine}${openNote}`
+    : '<p class="note">No segments recorded. The vehicle has to pull away and stop again.</p>';
+  const row = (label, s) => {
+    const g = gps ? gpsDistance(gps, s.t0, s.t1) : 0;
+    const gpsCells = gps ? `<td>${g > 20 ? fmtDist(g) : '—'}</td><td>${g > 20 ? pct(s.dist, g) : '—'}</td>` : '';
+    return `<tr class="num"><td>${label}</td><td>${fmtDist(s.dist)}</td>${gpsCells}<td>${fmtTime(s.dur)}</td><td>${Math.round(s.vmax * 3.6)} km/h</td></tr>`;
+  };
   $('done-table').innerHTML = n
-    ? '<tr><th>Segment</th><th>Length</th><th>Time</th><th>Top speed</th></tr>' +
-      segs.map((s, i) => row(`${i} → ${i + 1}`, s)).join('') +
-      (open ? row(`${segs.length} → no stop`, open) : '')
+    ? `<tr><th>Segment</th><th>Length</th>${gps ? '<th>GPS</th><th>Error</th>' : ''}<th>Time</th><th>Top speed</th></tr>` +
+      segs.map((s, i) => row(s.open ? `${i} → no stop` : `${i} → ${i + 1}`, s)).join('')
     : '';
   $('share-note').textContent = rec
     ? 'The recording keeps the raw sensor data: you can open it here again or send it over to tune the algorithm.'
@@ -296,7 +336,7 @@ function showSummary() {
 $('btn-share').addEventListener('click', () => exportRecording(buildRecording()));
 
 function buildRecording() {
-  return { ...rec.meta, marks: rec.marks, samples: rec.rows };
+  return { ...rec.meta, marks: rec.marks, gps: rec.gps?.length ? rec.gps : undefined, samples: rec.rows };
 }
 
 async function exportRecording(r) {
@@ -317,7 +357,8 @@ async function exportRecording(r) {
 
 // ---------------- replay / demo ----------------
 $('btn-demo').addEventListener('click', () => {
-  const { recording } = simulateRide({ seed: Math.floor(Math.random() * 1000) });
+  const seed = Math.floor(Math.random() * 1000);
+  const { recording } = simulateRide(vehicle === 'bus' ? { ...BUS_OPTS, gps: true, seed } : { seed });
   startReplay(recording, DEMO_SPEED);
 });
 $('btn-open').addEventListener('click', () => $('file-input').click());
@@ -333,7 +374,11 @@ function startReplay(recording, speed) {
   feeder = createFeeder(recording);
   feeder.speed = speed;
   tracker = feeder.tracker;
-  rec = recording.kind === 'synthetic' ? null : { meta: { ...recording, samples: undefined }, rows: recording.samples, marks: recording.marks || [] };
+  rec = recording.kind === 'synthetic' ? null : { meta: { ...recording, samples: undefined, gps: undefined }, rows: recording.samples, marks: recording.marks || [], gps: recording.gps || [] };
+  gpsFixes = recording.gps || [];
+  gpsRef = null;
+  const calN = Math.min(Math.max(recording.calibrationCount || 0, 30), recording.samples.length);
+  calibT = recording.samples[calN - 1][0] / 1000;
   playT = 0;
   mode = 'replay';
   enterRide(true);
@@ -349,7 +394,7 @@ async function refreshSaved() {
   for (const r of rides) {
     const li = document.createElement('li');
     const d = new Date(r.startedAt);
-    const label = `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}, ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} · ${plural(r.stops ?? 0, 'stop', 'stops')} · ${fmtDist(r.dist ?? 0)}`;
+    const label = `${r.profile === 'bus' ? 'Bus' : 'Metro'} · ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}, ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} · ${plural(r.stops ?? 0, 'stop', 'stops')} · ${fmtDist(r.dist ?? 0)}`;
     li.innerHTML = '<span class="num"></span><div class="acts"><button data-a="play">View</button><button data-a="file">File</button><button data-a="del">Delete</button></div>';
     li.querySelector('span').textContent = label;
     li.addEventListener('click', async (e) => {
@@ -428,12 +473,30 @@ function frame(now) {
     if (mode !== 'done') handleEvents();
     updateHud();
     if (tracker.state === 'moving' && mode !== 'done') scene.setLive(tracker.live);
+    if (mode !== 'done') updateGps();
     scene.setTrain(tracker.pos, tracker.psi);
     scene.render();
   }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+/** Redraws the GPS reference track (at most once a second, or when forced). */
+function updateGps(force = false) {
+  const hud = $('hud-gps');
+  if (!gpsFixes.length || !tracker || mode === 'done') { hud.hidden = true; if (!force) return; }
+  if (!gpsFixes.length || !tracker) return;
+  const now = performance.now();
+  if (!force && now - gpsCheckedAt < 1000) return;
+  gpsCheckedAt = now;
+  const upTo = (tracker.lastT ?? 0) + 0.5;
+  const fixes = gpsFixes.filter((f) => f[0] / 1000 <= upTo);
+  gpsRef = gpsReference(fixes, tracker, calibT);
+  scene.setGps(gpsRef?.aligned ? gpsRef.points : []);
+  const v = gpsRef ? gpsSpeed(gpsRef.local, upTo) : null;
+  hud.hidden = mode === 'done';
+  $('hud-gps-speed').textContent = v == null ? '—' : `${Math.round(v * 3.6)} km/h`;
+}
 
 function updateHud() {
   const tr = tracker;

@@ -30,6 +30,17 @@ function rotMatrix(yaw, pitch, roll) {
 }
 const mulT = (M, v) => [0, 1, 2].map((j) => M[0][j] * v[0] + M[1][j] * v[1] + M[2][j] * v[2]);
 
+// A city bus: short hops, right-angle turns at junctions, steeper grades.
+export const BUS_ROUTE = [
+  { length: 420, curves: [{ at: 150, len: 22, angle: 90 }], grade: 4 },
+  { length: 310, curves: [], grade: -3 },
+  { length: 560, curves: [{ at: 80, len: 25, angle: -90 }, { at: 380, len: 60, angle: 30 }], grade: 6 },
+  { length: 380, curves: [{ at: 200, len: 40, angle: -45 }], grade: -5 },
+  { length: 470, curves: [{ at: 120, len: 22, angle: 90 }], grade: 2 },
+];
+
+export const BUS_OPTS = { profile: 'bus', route: BUS_ROUTE, vmax: 13, aAcc: 1.3, aDec: 1.5, dwell: 15, vibration: 0.6, vibrationStill: 0.06 };
+
 export const DEFAULT_ROUTE = [
   { length: 1450, curves: [{ at: 400, len: 300, angle: 35 }], grade: -2.5 },
   { length: 2100, curves: [{ at: 300, len: 250, angle: -20 }, { at: 1300, len: 400, angle: -60 }], grade: 3 },
@@ -51,7 +62,8 @@ export function simulateRide(o = {}) {
   const accBias = o.accBias || [0.04, -0.03, 0.05];
   const gyroBias = o.gyroBias || [0.15, -0.1, 0.2];
   const gyroMap = o.gyroMap || 'spec';
-  const vmax = o.vmax || 20, aAcc = 1.0, aDec = 1.1, dwell = o.dwell || 25, g = 9.80665;
+  const vmax = o.vmax || 20, aAcc = o.aAcc || 1.0, aDec = o.aDec || 1.1, dwell = o.dwell || 25, g = 9.80665;
+  const vibMove = o.vibration ?? 0.25, vibStill = o.vibrationStill ?? 0.02;
 
   const samples = [];
   const truth = [[0, 0, 0]];
@@ -59,8 +71,21 @@ export function simulateRide(o = {}) {
   const trackLengths = [];
   let t = 0, x = 0, y = 0, z = 0, psi = 0;
 
+  // optional GPS: the route rotated to a random compass heading, 1 Hz, ~4 m noise
+  const gps = [];
+  let lastGps = -1;
+  const rot = r() * 2 * Math.PI, lat0 = 50.08, lon0 = 14.42;
+  // phone GNSS error drifts slowly rather than jumping every second
+  let ne = 0, nn = 0;
+  const gpsFix = () => {
+    ne = 0.9 * ne + 0.44 * gauss(r) * 4; nn = 0.9 * nn + 0.44 * gauss(r) * 4;
+    const e = Math.cos(rot) * x - Math.sin(rot) * y + ne;
+    const n = Math.sin(rot) * x + Math.cos(rot) * y + nn;
+    gps.push([Math.round(t * 1000), lat0 + n / 111320, lon0 + e / (111320 * Math.cos(lat0 * DEG)), 5, null, null]);
+  };
+
   const emit = (fCar, wCar, moving) => {
-    const vib = moving ? 0.25 : 0.02;
+    const vib = moving ? vibMove : vibStill;
     const f = mulT(M, fCar).map((v, i) => v + accBias[i] + gauss(r) * vib);
     const wd = mulT(M, wCar).map((v, i) => v / DEG + gyroBias[i] + gauss(r) * (moving ? 0.6 : 0.05));
     const rr = gyroMap === 'spec' ? [wd[2], wd[0], wd[1]] : [wd[0], wd[1], wd[2]];
@@ -68,7 +93,10 @@ export function simulateRide(o = {}) {
     t += dt;
   };
   const standStill = (sec, theta) => {
-    for (let i = 0; i < sec * hz; i++) emit([g * Math.sin(theta), 0, g * Math.cos(theta)], [0, 0, 0], false);
+    for (let i = 0; i < sec * hz; i++) {
+      emit([g * Math.sin(theta), 0, g * Math.cos(theta)], [0, 0, 0], false);
+      if (o.gps && t - lastGps >= 1) { lastGps = t; gpsFix(); }
+    }
   };
 
   const calibrationCount = 4 * hz;
@@ -88,8 +116,17 @@ export function simulateRide(o = {}) {
     while (s < L) {
       const remain = L - s;
       let a;
+      // slow down for curves: lateral acceleration stays under ~1.5 m/s²
+      let vCap = vmax, brakeFor = false;
+      for (const c of seg.curves) {
+        const vc = Math.min(vmax, Math.sqrt(1.5 / Math.abs((c.angle * DEG) / c.len)));
+        if (s >= c.at && s < c.at + c.len) vCap = Math.min(vCap, vc);
+        else if (c.at > s && v > vc && (v * v - vc * vc) / (2 * aDec) >= c.at - s - 1) brakeFor = true;
+      }
       if (v * v / (2 * aDec) >= remain) a = -Math.max(v * v / (2 * Math.max(remain, 0.05)), 0.2);
-      else if (v < vmax) a = aAcc;
+      else if (brakeFor) a = -aDec;
+      else if (v < vCap - 0.05) a = aAcc;
+      else if (v > vCap + 0.05) a = -aDec;
       else a = 0;
       v = Math.max(v + a * dt, 0);
       if (v === 0 && remain < 2) break;
@@ -102,6 +139,7 @@ export function simulateRide(o = {}) {
       y += Math.sin(psi) * Math.cos(th) * ds;
       z += Math.sin(th) * ds;
       truth.push([x, y, z]);
+      if (o.gps && t - lastGps >= 1) { lastGps = t; gpsFix(); }
       emit([a + g * Math.sin(th), v * yawRate, g * Math.cos(th)], [0, -pitchRate, yawRate], true);
     }
     stopsTruth.push([x, y, z]);
@@ -109,7 +147,10 @@ export function simulateRide(o = {}) {
     standStill(dwell, 0);
   }
   return {
-    recording: { version: 1, kind: 'synthetic', hz, calibrationCount, samples, startedAt: new Date().toISOString() },
+    recording: {
+      version: 1, kind: 'synthetic', profile: o.profile || 'metro', hz, calibrationCount, samples,
+      gps: o.gps ? gps : undefined, startedAt: new Date().toISOString(),
+    },
     truth, stopsTruth, trackLengths,
   };
 }
