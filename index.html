@@ -139,7 +139,7 @@
     .vehicle { display: grid; gap: 8px; }
     .vehicle-label { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
     .vehicle .note { margin: 0; }
-    .seg { display: inline-grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 12px; padding: 3px; background: var(--panel-solid); max-width: 320px; }
+    .seg { display: inline-grid; grid-template-columns: 1fr 1fr 1fr; border: 1px solid var(--line); border-radius: 12px; padding: 3px; background: var(--panel-solid); max-width: 360px; }
     .seg button { border: 0; background: transparent; border-radius: 9px; font-weight: 600; color: var(--muted); }
     .seg button[aria-checked="true"] { background: var(--amber); color: var(--amber-ink); }
     .gps-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #5aa9ff; margin-right: 4px; vertical-align: middle; }
@@ -161,29 +161,34 @@
       <span class="vehicle-label" id="veh-label">Riding a</span>
       <div class="seg" role="radiogroup" aria-labelledby="veh-label">
         <button type="button" role="radio" id="veh-metro" aria-checked="true">Metro</button>
+        <button type="button" role="radio" id="veh-tram" aria-checked="false">Tram</button>
         <button type="button" role="radio" id="veh-bus" aria-checked="false">Bus</button>
       </div>
       <p class="note" data-metro="Tuned for trains: smooth runs, gentle curves, level platforms."
-         data-bus="Tuned for buses: sharp turns, hard braking, stops on hills. GPS is recorded too, to check the drawn route against it.">Tuned for trains: smooth runs, gentle curves, level platforms.</p>
+         data-bus="Tuned for buses: sharp turns, hard braking, stops on hills. GPS is recorded too, to check the drawn route against it."
+         data-tram="Tuned for trams: rails like the metro, but tight street curves, traffic lights and hills. GPS is recorded too, to check the drawn route against it.">Tuned for trains: smooth runs, gentle curves, level platforms.</p>
     </section>
 
     <ol class="steps">
       <li id="st-offline">
-        <h2 data-bus="Open this page before you board">Open this page before you go underground</h2>
-        <p data-bus="The page saves itself on the phone, so a patchy connection on the way doesn't matter.">There is no network in the tunnel. The page saves itself on the phone and then works offline.</p>
+        <h2 data-bus="Open this page before you board"
+         data-tram="Open this page before you board">Open this page before you go underground</h2>
+        <p data-bus="The page saves itself on the phone, so a patchy connection on the way doesn't matter."
+         data-tram="The page saves itself on the phone, so a patchy connection on the way doesn't matter.">There is no network in the tunnel. The page saves itself on the phone and then works offline.</p>
         <div class="status" id="offline-status">Saving for offline use…</div>
       </li>
 
       <li id="st-sensors">
         <h2>Turn on the sensors</h2>
-        <p data-bus="The page needs the accelerometer and the gyroscope. On iPhone the browser will ask for permission. Location is asked for when you tap Start.">The page needs the accelerometer and the gyroscope. On iPhone the browser will ask for permission.</p>
+        <p data-bus="The page needs the accelerometer and the gyroscope. On iPhone the browser will ask for permission. Location is asked for when you tap Start."
+           data-tram="The page needs the accelerometer and the gyroscope. On iPhone the browser will ask for permission. Location is asked for when you tap Start.">The page needs the accelerometer and the gyroscope. On iPhone the browser will ask for permission.</p>
         <div class="row"><button id="btn-sensors" class="primary">Turn on sensors</button></div>
         <div class="status" id="sensor-status"></div>
       </li>
 
       <li id="st-mount">
         <h2>Fix the phone in place</h2>
-        <p data-bus="The phone has to ride with the bus and not move on its own. Holding it or keeping it on your lap won't work. Buses corner hard, so wedge it where it can't slide.">The phone has to ride with the car and not move on its own. Holding it in your hand won't work: your hand moves more than the train does.</p>
+        <p data-bus="The phone has to ride with the bus and not move on its own. Holding it or keeping it on your lap won't work. Buses corner hard, so wedge it where it can't slide." data-tram="The phone has to ride with the tram and not move on its own. Holding it or keeping it on your lap won't work. Trams lurch through junction curves, so wedge it where it can't slide.">The phone has to ride with the car and not move on its own. Holding it in your hand won't work: your hand moves more than the train does.</p>
         <div class="mounts">
           <div class="mount best">
             <svg viewBox="0 0 120 80" aria-hidden="true">
@@ -220,9 +225,10 @@
       </li>
 
       <li id="st-calib">
-        <h2 data-bus="Calibrate at a stop">Calibrate at a station</h2>
-        <p data-bus="While the bus is standing at a stop, tap Start and don't touch the phone for 3 seconds. The first pull-away after that tells the app which way is forward.">While the train is standing at a station, tap Start and don't touch the phone for 3 seconds. The first departure after that tells the app which way is forward.</p>
-        <p data-bus="At your stop, tap Finish as the bus pulls in: you don't have to wait for it to stop.">At your last station, tap Finish as the train pulls in: you don't have to wait for it to stop.</p>
+        <h2 data-bus="Calibrate at a stop"
+         data-tram="Calibrate at a stop">Calibrate at a station</h2>
+        <p data-bus="While the bus is standing at a stop, tap Start and don't touch the phone for 3 seconds. The first pull-away after that tells the app which way is forward." data-tram="While the tram is standing at a stop, tap Start and don't touch the phone for 3 seconds. The first pull-away after that tells the app which way is forward.">While the train is standing at a station, tap Start and don't touch the phone for 3 seconds. The first departure after that tells the app which way is forward.</p>
+        <p data-bus="At your stop, tap Finish as the bus pulls in: you don't have to wait for it to stop." data-tram="At your stop, tap Finish as the tram pulls in: you don't have to wait for it to stop.">At your last station, tap Finish as the train pulls in: you don't have to wait for it to stop.</p>
         <div class="calib">
           <svg class="ring" viewBox="0 0 54 54" aria-hidden="true">
             <circle class="bg" cx="27" cy="27" r="23"/>
@@ -242,7 +248,7 @@
         <input id="file-input" type="file" accept=".json,application/json" hidden>
       </div>
       <div class="status" id="open-status"></div>
-      <p class="note" data-bus="The demo runs a synthetic 5-stop bus ride, with simulated GPS, through the same algorithm, 25× faster than real time.">The demo runs a synthetic 4-segment metro ride through the same algorithm, 25× faster than real time.</p>
+      <p class="note" data-bus="The demo runs a synthetic 5-stop bus ride, with simulated GPS, through the same algorithm, 25× faster than real time." data-tram="The demo runs a synthetic 4-segment tram ride, with simulated GPS, through the same algorithm, 25× faster than real time.">The demo runs a synthetic 4-segment metro ride through the same algorithm, 25× faster than real time.</p>
     </section>
 
     <section class="extra" id="saved-section" hidden>

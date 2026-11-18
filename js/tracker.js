@@ -63,6 +63,19 @@ export const PROFILES = {
     moveRate: 1.2,         // a bus turns at up to ~30°/s; a hand moves a phone faster
     minSegDist: 8,
   },
+  // Rails like the metro (no sideslip, smoother than a bus), streets like a bus:
+  // tight junction curves (~20 m radius), traffic lights, hills.
+  tram: {
+    departAcc: 0.2,
+    departHold: 0.35,
+    minStillSec: 1.2,
+    stopAcc: 0.25,
+    slopeAcc: 0.8,
+    slopeStillSec: 4,
+    maxPitch: 8 * DEG,
+    moveRate: 1.0,         // trams turn at up to ~20°/s
+    minSegDist: 10,
+  },
 };
 
 export class Tracker {

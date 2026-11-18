@@ -1,6 +1,6 @@
 // node test/tracker.test.mjs — runs synthetic rides through the tracker and
 // compares stop-to-stop distances and stop positions with ground truth.
-import { simulateRide, BUS_OPTS } from '../js/sim.js';
+import { simulateRide, BUS_OPTS, TRAM_OPTS } from '../js/sim.js';
 import { replayRecording } from '../js/tracker.js';
 import { gpsReference, gpsDistance } from '../js/gps.js';
 
@@ -11,6 +11,8 @@ const cases = [
   { name: 'big accel bias 0.1 m/s²', opts: { accBias: [0.1, -0.1, 0.1], seed: 5 } },
   { name: 'city bus, phone on the seat', opts: { ...BUS_OPTS, phone: { yaw: 70, pitch: 0, roll: 0 }, seed: 9 } },
   { name: 'city bus, phone on the window, iOS gyro order', opts: { ...BUS_OPTS, gyroMap: 'xyz', seed: 4 } },
+  { name: 'tram, phone on the window, iOS gyro order', opts: { ...TRAM_OPTS, gyroMap: 'xyz', seed: 6 } },
+  { name: 'tram, phone on the seat', opts: { ...TRAM_OPTS, phone: { yaw: -40, pitch: 0, roll: 0 }, seed: 15 } },
 ];
 
 let failed = 0;

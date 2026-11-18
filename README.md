@@ -26,9 +26,11 @@ On synthetic rides (`node test/tracker.test.mjs`) segment lengths come out withi
 about 0–9 % and the stop positions drift 2–8 % of the distance travelled. Real
 rides will be worse; that is what the recordings are for.
 
-## Bus mode
+## Bus and tram modes
 
-Pick **Bus** on the setup screen. The tracker then uses a bus profile (sharper
+Pick **Bus** or **Tram** on the setup screen. The tram profile sits between the
+metro and the bus: rails (no sideslip, smoother runs) but tight junction curves,
+traffic lights and hills; GPS is recorded the same way. With **Bus**, the tracker uses a bus profile (sharper
 turns, harder braking, shorter stops, stops on hills up to ~8 %, steeper grades)
 and the page records GPS alongside the motion sensors. GPS is not used for the
 route itself: it is drawn as a blue reference line next to the sensor track, and

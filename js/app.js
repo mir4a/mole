@@ -1,7 +1,7 @@
 import { Tracker, createFeeder, packSample, unpackSample, stillStats } from './tracker.js';
 import { requestMotionPermission, startMotion, keepAwake, motionSupported, startGeo } from './sensors.js';
 import { TunnelScene } from './scene.js';
-import { simulateRide, BUS_OPTS } from './sim.js';
+import { simulateRide, BUS_OPTS, TRAM_OPTS } from './sim.js';
 import { gpsReference, gpsDistance, gpsSpeed } from './gps.js';
 import * as store from './store.js';
 
@@ -46,17 +46,19 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 // ---------------- vehicle ----------------
 function setVehicle(v) {
-  vehicle = v === 'bus' ? 'bus' : 'metro';
+  vehicle = ['bus', 'tram'].includes(v) ? v : 'metro';
   try { localStorage.setItem('mole.vehicle', vehicle); } catch {}
   $('veh-metro').setAttribute('aria-checked', String(vehicle === 'metro'));
   $('veh-bus').setAttribute('aria-checked', String(vehicle === 'bus'));
-  for (const el of document.querySelectorAll('[data-bus]')) {
+  $('veh-tram').setAttribute('aria-checked', String(vehicle === 'tram'));
+  for (const el of document.querySelectorAll('[data-bus], [data-tram]')) {
     if (!el.dataset.metro) el.dataset.metro = el.textContent;
-    el.textContent = vehicle === 'bus' ? el.dataset.bus : el.dataset.metro;
+    el.textContent = el.dataset[vehicle] || el.dataset.metro;
   }
 }
 $('veh-metro').addEventListener('click', () => setVehicle('metro'));
 $('veh-bus').addEventListener('click', () => setVehicle('bus'));
+$('veh-tram').addEventListener('click', () => setVehicle('tram'));
 try { setVehicle(localStorage.getItem('mole.vehicle') || 'metro'); } catch { setVehicle('metro'); }
 
 // ---------------- step 1: offline ----------------
@@ -154,7 +156,7 @@ ui.start.addEventListener('click', () => {
   ui.start.disabled = true;
   setStatus(ui.calibStatus, "Don't touch the phone…");
   gpsFixes = []; gpsRef = null;
-  if (vehicle === 'bus' && !geo) {
+  if (vehicle !== 'metro' && !geo) { // above ground: GPS as a reference
     geo = startGeo((fix) => gpsFixes.push(fix), (err) => {
       geo = null;
       toast(err === 'denied' ? 'No location access: the GPS comparison is off.' : 'GPS is unavailable: the comparison is off.', 'warn');
@@ -193,7 +195,7 @@ function calibrateStep(tMs, a, r) {
   flushTimer = setInterval(flush, 5000);
   mode = 'live';
   enterRide(false);
-  toast(vehicle === 'bus' ? 'Calibrated. Waiting for the bus to pull away.' : 'Calibrated. Waiting for the train to leave.');
+  toast(`Calibrated. Waiting for the ${vehicle === 'metro' ? 'train' : vehicle} to pull away.`);
 }
 
 async function flush() {
@@ -358,7 +360,8 @@ async function exportRecording(r) {
 // ---------------- replay / demo ----------------
 $('btn-demo').addEventListener('click', () => {
   const seed = Math.floor(Math.random() * 1000);
-  const { recording } = simulateRide(vehicle === 'bus' ? { ...BUS_OPTS, gps: true, seed } : { seed });
+  const opts = { bus: BUS_OPTS, tram: TRAM_OPTS }[vehicle];
+  const { recording } = simulateRide(opts ? { ...opts, gps: true, seed } : { seed });
   startReplay(recording, DEMO_SPEED);
 });
 $('btn-open').addEventListener('click', () => $('file-input').click());
@@ -394,7 +397,7 @@ async function refreshSaved() {
   for (const r of rides) {
     const li = document.createElement('li');
     const d = new Date(r.startedAt);
-    const label = `${r.profile === 'bus' ? 'Bus' : 'Metro'} · ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}, ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} · ${plural(r.stops ?? 0, 'stop', 'stops')} · ${fmtDist(r.dist ?? 0)}`;
+    const label = `${{ bus: 'Bus', tram: 'Tram' }[r.profile] || 'Metro'} · ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}, ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} · ${plural(r.stops ?? 0, 'stop', 'stops')} · ${fmtDist(r.dist ?? 0)}`;
     li.innerHTML = '<span class="num"></span><div class="acts"><button data-a="play">View</button><button data-a="file">File</button><button data-a="del">Delete</button></div>';
     li.querySelector('span').textContent = label;
     li.addEventListener('click', async (e) => {
