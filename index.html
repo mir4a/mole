@@ -1,19 +1,282 @@
-<html>
-  <head>
-    <meta http-equiv="content-type" content="text/html; charset=UTF-8">
-    <title></title>
-    <meta http-equiv="content-type" content="text/html; charset=UTF-8">
-    <meta name="robots" content="noindex, nofollow">
-    <meta name="googlebot" content="noindex, nofollow">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-  </head>
-  <body>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0b0f12">
+  <title>Mole</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <style>
+    /* Layout: a scrolling setup sheet, then a full-screen 3D view with a HUD
+       pinned to the edges. Single dark look on purpose: it is a tunnel. */
+    :root {
+      --bg: #0b0f12;
+      --panel: rgba(17, 23, 28, 0.86);
+      --panel-solid: #12181d;
+      --line: #25313a;
+      --fg: #e8edf0;
+      --muted: #8a99a4;
+      --amber: #ffb238;      /* sodium tunnel lamp: the accent */
+      --amber-ink: #1a1306;
+      --go: #4fd08a;         /* signal green: state "ok / stable" */
+      --halt: #ff5a4f;       /* signal red: warnings */
+      --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      --mono: ui-monospace, "SF Mono", "Roboto Mono", Menlo, monospace;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: var(--bg); color: var(--fg); font: 15px/1.5 var(--font);
+      -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+    }
+    [hidden] { display: none !important; }
+    button {
+      font: inherit; color: inherit; border: 1px solid var(--line); background: var(--panel-solid);
+      border-radius: 10px; padding: 10px 14px; cursor: pointer; min-height: 44px;
+    }
+    button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+    button:disabled { opacity: 0.4; cursor: default; }
+    button.primary { background: var(--amber); color: var(--amber-ink); border-color: var(--amber); font-weight: 650; }
+    .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
-    <script src="./draft.js" type="module"></script>
-    
+    /* ---------- setup ---------- */
+    #setup {
+      min-height: 100%;
+      padding: calc(env(safe-area-inset-top, 0px) + 28px) max(16px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 32px) max(16px, env(safe-area-inset-left, 0px));
+    }
+    .sheet { max-width: 560px; margin: 0 auto; display: grid; gap: 22px; }
+    .brand { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+    .brand h1 { margin: 0; font-size: 40px; letter-spacing: 0.02em; line-height: 1; }
+    .brand h1 span { color: var(--amber); }
+    .brand p { margin: 0; color: var(--muted); }
+    ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; counter-reset: step; }
+    ol.steps > li {
+      counter-increment: step; position: relative; padding: 16px 16px 16px 56px;
+      background: var(--panel-solid); border: 1px solid var(--line); border-radius: 14px; min-width: 0;
+    }
+    ol.steps > li::before {
+      content: counter(step); position: absolute; left: 16px; top: 16px; width: 26px; height: 26px; border-radius: 50%;
+      border: 1.5px solid var(--muted); color: var(--muted); display: grid; place-items: center; font: 600 13px var(--mono);
+    }
+    ol.steps > li.done::before { content: "✓"; border-color: var(--go); color: var(--go); }
+    ol.steps h2 { margin: 0 0 4px; font-size: 16px; }
+    ol.steps p { margin: 0; color: var(--muted); }
+    .status { margin-top: 10px; font-size: 14px; }
+    .status.ok { color: var(--go); } .status.bad { color: var(--halt); }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
 
+    .mounts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+    .mount { border: 1px solid var(--line); border-radius: 10px; padding: 8px; text-align: center; font-size: 12.5px; color: var(--muted); line-height: 1.3; }
+    .mount svg { width: 100%; height: auto; display: block; margin-bottom: 6px; }
+    .mount.best { border-color: var(--amber); color: var(--fg); }
+    @media (max-width: 380px) { .mounts { grid-template-columns: 1fr; } .mount svg { max-width: 160px; margin: 0 auto 6px; } }
 
+    .meter { margin-top: 12px; display: grid; gap: 6px; }
+    .meter-bar { height: 10px; border-radius: 5px; background: #1b242b; overflow: hidden; }
+    .meter-bar i { display: block; height: 100%; width: 0; background: var(--go); transition: width 0.15s, background 0.3s; }
+    .meter-text { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
 
-<!-- <canvas data-engine="three.js r146" width="1440" height="1426" style="display: block; width: 720px; height: 713px;"></canvas> -->
-  </body>
+    .calib { display: flex; align-items: center; gap: 14px; margin-top: 12px; }
+    .ring { width: 54px; height: 54px; flex: none; }
+    .ring circle { fill: none; stroke-width: 5; }
+    .ring .bg { stroke: #1f2a31; } .ring .fg { stroke: var(--amber); stroke-linecap: round; transform: rotate(-90deg); transform-origin: 50% 50%; transition: stroke-dashoffset 0.1s linear; }
+
+    .extra { display: grid; gap: 10px; }
+    .extra h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+    .rides { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+    .rides li { display: flex; gap: 10px; align-items: center; justify-content: space-between; border: 1px solid var(--line); border-radius: 10px; padding: 8px 8px 8px 12px; min-width: 0; }
+    .rides li span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+    .rides li .acts { display: flex; gap: 6px; flex: none; }
+    .rides button { min-height: 36px; padding: 6px 10px; font-size: 13px; }
+    .note { font-size: 13px; color: var(--muted); }
+
+    /* ---------- ride ---------- */
+    #ride { position: fixed; inset: 0; }
+    #view { position: absolute; inset: 0; touch-action: none; }
+    .hud-top {
+      position: absolute; top: 0; left: 0; right: 0; display: flex; gap: 8px; align-items: flex-start; justify-content: space-between;
+      padding: calc(env(safe-area-inset-top, 0px) + 10px) max(12px, env(safe-area-inset-right, 0px)) 0 max(12px, env(safe-area-inset-left, 0px));
+      pointer-events: none;
+    }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); pointer-events: auto; }
+    .speed b { font: 700 40px/1 var(--mono); font-variant-numeric: tabular-nums; }
+    .speed small { color: var(--muted); margin-left: 4px; }
+    .accel { margin-top: 8px; width: 150px; height: 6px; border-radius: 3px; background: #1b242b; position: relative; }
+    .accel::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--muted); }
+    .accel i { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+    .accel-l { display: flex; justify-content: space-between; width: 150px; font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .stats { display: grid; gap: 2px; text-align: right; font-size: 13px; color: var(--muted); }
+    .stats b { color: var(--fg); font: 600 15px var(--mono); }
+    .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: #1b242b; justify-self: end; }
+    .chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+    .chip.stopped { color: var(--halt); } .chip.moving { color: var(--go); } .chip.seeking { color: var(--amber); }
+
+    .hud-bottom {
+      position: absolute; left: 0; right: 0; bottom: 0; display: grid; gap: 8px;
+      padding: 0 max(12px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 12px) max(12px, env(safe-area-inset-left, 0px));
+      pointer-events: none;
+    }
+    .toasts { display: grid; gap: 6px; justify-items: center; }
+    .toast { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px 14px; font-size: 14px; max-width: 100%; pointer-events: auto; animation: tin 0.25s ease-out; }
+    .toast.warn { border-color: var(--halt); }
+    .toast.good { border-color: var(--go); }
+    @keyframes tin { from { transform: translateY(8px); opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+    .bar { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; pointer-events: auto; }
+    .bar button { background: var(--panel); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+    #debug { font: 11px/1.4 var(--mono); white-space: pre; color: var(--muted); max-height: 40vh; overflow: auto; }
+
+    .done-sheet { max-height: 60vh; overflow: auto; display: grid; gap: 10px; }
+    .done-sheet h2 { margin: 0; font-size: 18px; }
+    .tbl-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; font-size: 13px; }
+    th, td { padding: 4px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 500; }
+    td:first-child, th:first-child { text-align: left; }
+    .done-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .done-head button { min-height: 36px; padding: 6px 12px; font-size: 13px; }
+  </style>
+</head>
+<body>
+
+<!-- ============ SETUP ============ -->
+<main id="setup">
+  <div class="sheet">
+    <header class="brand">
+      <h1>M<span>o</span>le</h1>
+      <p>draws the metro tunnel from your phone's motion sensors</p>
+    </header>
+
+    <ol class="steps">
+      <li id="st-offline">
+        <h2>Open this page before you go underground</h2>
+        <p>There is no network in the tunnel. The page saves itself on the phone and then works offline.</p>
+        <div class="status" id="offline-status">Saving for offline use…</div>
+      </li>
+
+      <li id="st-sensors">
+        <h2>Turn on the sensors</h2>
+        <p>The page needs the accelerometer and the gyroscope. On iPhone the browser will ask for permission.</p>
+        <div class="row"><button id="btn-sensors" class="primary">Turn on sensors</button></div>
+        <div class="status" id="sensor-status"></div>
+      </li>
+
+      <li id="st-mount">
+        <h2>Fix the phone in place</h2>
+        <p>The phone has to ride with the car and not move on its own. Holding it in your hand won't work: your hand moves more than the train does.</p>
+        <div class="mounts">
+          <div class="mount best">
+            <svg viewBox="0 0 120 80" aria-hidden="true">
+              <rect x="6" y="6" width="108" height="56" rx="8" fill="#16212a" stroke="#3a4a56" stroke-width="2"/>
+              <rect x="0" y="62" width="120" height="8" rx="2" fill="#3a4a56"/>
+              <rect x="52" y="22" width="22" height="40" rx="4" fill="#ffb238" transform="rotate(-8 63 62)"/>
+              <rect x="56" y="27" width="14" height="26" rx="1.5" fill="#1a1306" transform="rotate(-8 63 62)"/>
+            </svg>
+            Lean it against the window, bottom edge on the frame
+          </div>
+          <div class="mount">
+            <svg viewBox="0 0 120 80" aria-hidden="true">
+              <rect x="8" y="44" width="104" height="16" rx="6" fill="#2b3842"/>
+              <rect x="14" y="14" width="18" height="34" rx="6" fill="#2b3842"/>
+              <rect x="48" y="38" width="40" height="7" rx="2" fill="#ffb238"/>
+              <rect x="0" y="60" width="120" height="6" fill="#3a4a56"/>
+            </svg>
+            Lay it on the seat, screen up
+          </div>
+          <div class="mount">
+            <svg viewBox="0 0 120 80" aria-hidden="true">
+              <rect x="70" y="4" width="10" height="66" fill="#3a4a56"/>
+              <rect x="52" y="22" width="18" height="34" rx="4" fill="#ffb238"/>
+              <path d="M30 40 h18 M40 33 l9 7 -9 7" stroke="#8a99a4" stroke-width="3" fill="none" stroke-linecap="round"/>
+              <rect x="0" y="70" width="120" height="6" fill="#3a4a56"/>
+            </svg>
+            Press it against the end wall of the car
+          </div>
+        </div>
+        <div class="meter" aria-live="polite">
+          <div class="meter-bar"><i id="meter-fill"></i></div>
+          <div class="meter-text"><span id="meter-label">Turn on the sensors to check</span><span class="num" id="meter-value"></span></div>
+        </div>
+      </li>
+
+      <li id="st-calib">
+        <h2>Calibrate at a station</h2>
+        <p>While the train is standing at a station, tap Start and don't touch the phone for 3 seconds. The first departure after that tells the app which way is forward.</p>
+        <div class="calib">
+          <svg class="ring" viewBox="0 0 54 54" aria-hidden="true">
+            <circle class="bg" cx="27" cy="27" r="23"/>
+            <circle class="fg" id="ring-fg" cx="27" cy="27" r="23" stroke-dasharray="144.5" stroke-dashoffset="144.5"/>
+          </svg>
+          <button id="btn-start" class="primary" disabled>Start</button>
+        </div>
+        <div class="status" id="calib-status"></div>
+      </li>
+    </ol>
+
+    <section class="extra">
+      <h3>Try it without the metro</h3>
+      <div class="row" style="margin-top:0">
+        <button id="btn-demo">Demo ride</button>
+        <button id="btn-open">Open recording (.json)</button>
+        <input id="file-input" type="file" accept=".json,application/json" hidden>
+      </div>
+      <div class="status" id="open-status"></div>
+      <p class="note">The demo runs a synthetic 4-segment ride through the same algorithm, 25× faster than real time.</p>
+    </section>
+
+    <section class="extra" id="saved-section" hidden>
+      <h3>Saved rides</h3>
+      <ul class="rides" id="saved-list"></ul>
+    </section>
+  </div>
+</main>
+
+<!-- ============ RIDE ============ -->
+<section id="ride" hidden>
+  <div id="view"></div>
+
+  <div class="hud-top">
+    <div class="card">
+      <div class="speed"><b id="hud-speed">0</b><small>km/h</small></div>
+      <div class="accel" title="Acceleration along the car"><i id="hud-accel"></i></div>
+      <div class="accel-l"><span>−1.5</span><span>m/s²</span><span>+1.5</span></div>
+    </div>
+    <div class="card stats">
+      <span class="chip stopped" id="hud-state">Stopped</span>
+      <span>distance <b id="hud-dist">0 m</b></span>
+      <span>stops <b id="hud-stops">0</b></span>
+      <span id="hud-play" hidden>replay <b id="hud-playtime">0:00</b></span>
+    </div>
+  </div>
+
+  <div class="hud-bottom">
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+    <div class="card" id="debug" hidden></div>
+    <div class="card done-sheet" id="done" hidden>
+      <div class="done-head"><h2>Ride finished</h2><button id="btn-hide-summary">Hide</button></div>
+      <div id="done-summary"></div>
+      <div class="tbl-wrap"><table id="done-table"></table></div>
+      <div class="row">
+        <button id="btn-share" class="primary">Save recording</button>
+        <button id="btn-new">New ride</button>
+      </div>
+      <p class="note" id="share-note"></p>
+    </div>
+    <div class="bar" id="ride-bar">
+      <button id="btn-view" data-in="ride">View: overview</button>
+      <button id="btn-summary" data-in="done">Summary</button>
+      <button id="btn-vex" data-in="ride done">Height ×1</button>
+      <button id="btn-fit" data-in="done">Reset view</button>
+      <button id="btn-recal" hidden>Recalibrate</button>
+      <button id="btn-debug" data-in="ride" aria-label="Technical data">Data</button>
+      <button id="btn-finish" data-in="ride">Finish</button>
+    </div>
+  </div>
+</section>
+
+<script type="module" src="js/app.js"></script>
+</body>
 </html>

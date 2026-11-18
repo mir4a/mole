@@ -1,0 +1,249 @@
+// 3D view: finished segments as tunnel tubes, the current ride as a live line,
+// stops as platforms. Tracker frame (x fwd, y left, z up) -> three.js (x, y up, -z).
+import * as THREE from '../vendor/three.module.min.js';
+import { OrbitControls } from '../vendor/OrbitControls.js';
+
+const COLORS = {
+  bg: 0x0b0f12, tunnel: 0xffb238, centre: 0xffd27a, live: 0xf2f5f7,
+  platform: 0x4fd08a, grid: 0x24313a, gridMain: 0x3a4a56, train: 0xffffff,
+};
+
+export class TunnelScene {
+  constructor(container) {
+    this.vex = 1; // vertical exaggeration
+    this.k = 1;   // visual scale of tube/platform/labels (grows in overview so they stay visible)
+    this.mode = 'follow';
+    this.segments = []; // arrays of tracker-frame points
+    this.stops = [];
+    this.livePts = [];
+    this.trainPos = [0, 0, 0];
+    this.heading = 0;
+
+    const r = (this.renderer = new THREE.WebGLRenderer({ antialias: true }));
+    r.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    r.setClearColor(COLORS.bg);
+    container.appendChild(r.domElement);
+
+    this.scene = new THREE.Scene();
+    this.scene.fog = new THREE.FogExp2(COLORS.bg, 0.00045);
+    this.camera = new THREE.PerspectiveCamera(55, 1, 1, 60000);
+    this.camera.position.set(-150, 90, 60);
+
+    this.controls = new OrbitControls(this.camera, r.domElement);
+    this.controls.enableDamping = true;
+    this.controls.enabled = false;
+    this.controls.autoRotateSpeed = 0.8;
+    this.controls.addEventListener('start', () => { this.controls.autoRotate = false; });
+    r.domElement.addEventListener('pointerdown', () => { if (this.mode === 'follow') this.setMode('free'); });
+
+    this.scene.add(new THREE.HemisphereLight(0xfff1d6, 0x101418, 1.1));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.6);
+    sun.position.set(300, 800, 200);
+    this.scene.add(sun);
+
+    this.grid = new THREE.GridHelper(40000, 400, COLORS.gridMain, COLORS.grid);
+    this.grid.position.y = -40;
+    this.scene.add(this.grid);
+
+    this.tunnelGroup = new THREE.Group();
+    this.scene.add(this.tunnelGroup);
+    this.stopGroup = new THREE.Group();
+    this.scene.add(this.stopGroup);
+
+    // live line (growable)
+    this.liveMax = 20000;
+    const lg = new THREE.BufferGeometry();
+    lg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.liveMax * 3), 3));
+    lg.setDrawRange(0, 0);
+    this.liveLine = new THREE.Line(lg, new THREE.LineBasicMaterial({ color: COLORS.live, transparent: true, opacity: 0.9 }));
+    this.liveLine.frustumCulled = false;
+    this.scene.add(this.liveLine);
+
+    // train marker: a short glowing car body
+    const car = new THREE.Mesh(
+      new THREE.BoxGeometry(20, 3.6, 3),
+      new THREE.MeshStandardMaterial({ color: COLORS.train, emissive: 0xffe2a8, emissiveIntensity: 0.9 })
+    );
+    this.train = car;
+    this.scene.add(car);
+    const lamp = new THREE.PointLight(0xffc870, 2.5, 140, 1.2);
+    car.add(lamp);
+
+    this.resize = this.resize.bind(this);
+    window.addEventListener('resize', this.resize);
+    this.resize();
+    this.addStop([0, 0, 0], 0, 0);
+  }
+
+  toThree(p) { return new THREE.Vector3(p[0], p[2] * this.vex, -p[1]); }
+
+  resize() {
+    const el = this.renderer.domElement.parentElement;
+    const w = el.clientWidth || window.innerWidth, h = el.clientHeight || window.innerHeight;
+    this.renderer.setSize(w, h, false);
+    this.renderer.domElement.style.width = '100%';
+    this.renderer.domElement.style.height = '100%';
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+  }
+
+  clear() {
+    this.segments = []; this.stops = []; this.livePts = [];
+    this.trainPos = [0, 0, 0]; this.heading = 0;
+    this.rebuild();
+    this.addStop([0, 0, 0], 0, 0);
+  }
+
+  addSegment(points) {
+    this.segments.push(points);
+    this.buildSegment(points);
+  }
+
+  buildSegment(points) {
+    if (points.length < 2) return;
+    const pts = points.map((p) => this.toThree(p));
+    const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
+    const lengthM = curve.getLength();
+    const tube = new THREE.Mesh(
+      new THREE.TubeGeometry(curve, Math.min(Math.max(Math.round(lengthM / 6), 8), 1500), 3 * this.k, 12, false),
+      new THREE.MeshStandardMaterial({
+        color: COLORS.tunnel, emissive: COLORS.tunnel, emissiveIntensity: 0.12,
+        transparent: true, opacity: 0.34, side: THREE.DoubleSide, depthWrite: false, roughness: 0.6,
+      })
+    );
+    const rings = new THREE.Mesh(
+      new THREE.TubeGeometry(curve, Math.min(Math.max(Math.round(lengthM / 25), 4), 600), 3.05 * this.k, 10, false),
+      new THREE.MeshBasicMaterial({ color: COLORS.tunnel, wireframe: true, transparent: true, opacity: 0.18 })
+    );
+    const centre = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineBasicMaterial({ color: COLORS.centre })
+    );
+    this.tunnelGroup.add(tube, rings, centre);
+  }
+
+  addStop(p, n, heading) {
+    this.stops.push({ p, n, heading });
+    this.buildStop(p, n, heading);
+  }
+
+  buildStop(p, n, heading) {
+    const g = new THREE.Group();
+    const plat = new THREE.Mesh(
+      new THREE.BoxGeometry(100 + 20 * this.k, 1.2 * this.k, 9 * this.k),
+      new THREE.MeshStandardMaterial({ color: COLORS.platform, emissive: COLORS.platform, emissiveIntensity: 0.35, transparent: true, opacity: 0.75 })
+    );
+    plat.position.y = -2.5 * this.k;
+    g.add(plat);
+    const label = makeLabel(n === 0 ? 'start' : String(n));
+    label.scale.multiplyScalar(this.k);
+    label.position.y *= this.k;
+    g.add(label);
+    g.position.copy(this.toThree(p));
+    g.rotation.y = heading;
+    this.stopGroup.add(g);
+  }
+
+  setLive(points) {
+    this.livePts = points;
+    const n = Math.min(points.length, this.liveMax);
+    const arr = this.liveLine.geometry.attributes.position.array;
+    for (let i = 0; i < n; i++) {
+      const p = points[i];
+      arr[i * 3] = p[0]; arr[i * 3 + 1] = p[2] * this.vex; arr[i * 3 + 2] = -p[1];
+    }
+    this.liveLine.geometry.attributes.position.needsUpdate = true;
+    this.liveLine.geometry.setDrawRange(0, n);
+  }
+
+  setTrain(pos, heading) {
+    this.trainPos = pos;
+    this.heading = heading;
+  }
+
+  setAutoRotate(on) { this.controls.autoRotate = on; }
+
+  setVex(v) { this.vex = v; this.rebuild(); }
+
+  rebuild() {
+    for (const grp of [this.tunnelGroup, this.stopGroup]) {
+      for (const c of [...grp.children]) {
+        grp.remove(c);
+        c.traverse?.((o) => { o.geometry?.dispose(); o.material?.map?.dispose(); o.material?.dispose(); });
+      }
+    }
+    for (const s of this.segments) this.buildSegment(s);
+    const stops = this.stops; this.stops = [];
+    for (const s of stops) this.addStop(s.p, s.n, s.heading);
+    this.setLive(this.livePts);
+  }
+
+  setMode(mode) {
+    this.mode = mode;
+    this.controls.enabled = mode !== 'follow';
+    const far = mode === 'overview';
+    this.scene.fog.density = far ? 0 : 0.00045;
+    const k = far ? Math.max(1, this.extent() / 900) : 1;
+    if (k !== this.k) { this.k = k; this.train.scale.setScalar(k); this.rebuild(); }
+    if (far) this.fitAll();
+    this.onModeChange?.(mode);
+  }
+
+  extent() {
+    const box = new THREE.Box3();
+    box.expandByPoint(this.toThree(this.trainPos));
+    for (const s of this.segments) for (const p of s) box.expandByPoint(this.toThree(p));
+    return box.getSize(new THREE.Vector3()).length();
+  }
+
+  fitAll() {
+    const box = new THREE.Box3();
+    box.expandByPoint(this.toThree(this.trainPos));
+    for (const s of this.segments) for (const p of s) box.expandByPoint(this.toThree(p));
+    for (const p of this.livePts) box.expandByPoint(this.toThree(p));
+    const c = box.getCenter(new THREE.Vector3());
+    const size = Math.max(box.getSize(new THREE.Vector3()).length(), 200);
+    this.controls.target.copy(c);
+    this.camera.position.set(c.x - size * 0.45, c.y + size * 0.42, c.z + size * 0.6);
+    this.controls.update();
+  }
+
+  render() {
+    const tp = this.toThree(this.trainPos);
+    this.train.position.copy(tp);
+    this.train.rotation.y = this.heading;
+    if (this.mode === 'follow') {
+      const back = new THREE.Vector3(-Math.cos(this.heading), 0, Math.sin(this.heading));
+      const want = tp.clone().addScaledVector(back, 140).add(new THREE.Vector3(0, 70, 0));
+      want.addScaledVector(new THREE.Vector3(-back.z, 0, back.x), 40);
+      this.camera.position.lerp(want, 0.15);
+      this.controls.target.lerp(tp, 0.3);
+      this.camera.lookAt(this.controls.target);
+    } else {
+      this.controls.update();
+    }
+    this.grid.position.x = Math.round(tp.x / 100) * 100;
+    this.grid.position.z = Math.round(tp.z / 100) * 100;
+    this.renderer.render(this.scene, this.camera);
+  }
+}
+
+function makeLabel(text) {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 128;
+  const x = c.getContext('2d');
+  x.fillStyle = 'rgba(11,15,18,0.85)';
+  x.beginPath();
+  if (x.roundRect) x.roundRect(28, 20, 200, 88, 18); else x.rect(28, 20, 200, 88);
+  x.fill();
+  x.strokeStyle = '#4fd08a'; x.lineWidth = 6; x.stroke();
+  x.fillStyle = '#e8edf0';
+  x.font = '600 56px system-ui, sans-serif';
+  x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillText(text, 128, 66);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, transparent: true }));
+  s.scale.set(48, 24, 1);
+  s.position.y = 22;
+  s.renderOrder = 10;
+  return s;
+}
