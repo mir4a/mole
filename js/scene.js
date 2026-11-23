@@ -133,12 +133,19 @@ export class TunnelScene {
     this.tunnelGroup.add(tube, rings, centre);
   }
 
-  addStop(p, n, heading) {
-    this.stops.push({ p, n, heading });
-    this.buildStop(p, n, heading);
+  /** label: text over the platform, null for an unnumbered halt, undefined for the default. */
+  addStop(p, n, heading, label) {
+    this.stops.push({ p, n, heading, label });
+    this.buildStop(p, n, heading, label);
   }
 
-  buildStop(p, n, heading) {
+  /** Relabels all stops at once (index = stop number; 'start' at 0). */
+  setStopLabels(labels) {
+    this.stops.forEach((s, i) => { s.label = labels[i]; });
+    this.rebuild();
+  }
+
+  buildStop(p, n, heading, label) {
     const g = new THREE.Group();
     const plat = new THREE.Mesh(
       new THREE.BoxGeometry(100 + 20 * this.k, 1.2 * this.k, 9 * this.k),
@@ -146,11 +153,12 @@ export class TunnelScene {
     );
     plat.position.y = -2.5 * this.k;
     g.add(plat);
-    if (n === 0 || this.numberStops) {
-      const label = makeLabel(n === 0 ? 'start' : String(n));
-      label.scale.multiplyScalar(this.k);
-      label.position.y *= this.k;
-      g.add(label);
+    const text = label !== undefined ? label : n === 0 ? 'start' : this.numberStops ? String(n) : null;
+    if (text) {
+      const sprite = makeLabel(text);
+      sprite.scale.multiplyScalar(this.k);
+      sprite.position.y *= this.k;
+      g.add(sprite);
     } else {
       plat.scale.set(0.35, 1, 1); // a halt at a light or a crossing: short, unnumbered
     }
@@ -227,7 +235,7 @@ export class TunnelScene {
     }
     for (const s of this.segments) this.buildSegment(s);
     const stops = this.stops; this.stops = [];
-    for (const s of stops) this.addStop(s.p, s.n, s.heading);
+    for (const s of stops) this.addStop(s.p, s.n, s.heading, s.label);
     this.setLive(this.livePts, true);
     this.setGps(this.gpsPts);
   }

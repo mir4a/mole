@@ -1,6 +1,9 @@
 // node test/tracker.test.mjs — runs synthetic rides through the tracker and
 // compares stop-to-stop distances and stop positions with ground truth.
-import { simulateRide, BUS_OPTS, TRAM_OPTS, simulateSensorCheck } from '../js/sim.js';
+import { simulateRide, simulateSensorCheck } from '../js/sim.js';
+import { VEHICLES } from '../js/vehicles.js';
+
+const BUS_OPTS = VEHICLES.bus.demo, TRAM_OPTS = VEHICLES.tram.demo;
 import { analyzeSensorCheck } from '../js/sensorcheck.js';
 import { replayRecording } from '../js/tracker.js';
 import { gpsReference, gpsDistance } from '../js/gps.js';

@@ -42,27 +42,6 @@ function carToWorld(psi, theta, phi) {
   return matMul(Rz, matMul(Ry, Rx));
 }
 
-// A city bus: short hops, right-angle turns at junctions, steeper grades.
-export const BUS_ROUTE = [
-  { length: 420, curves: [{ at: 150, len: 22, angle: 90 }], grade: 4 },
-  { length: 310, curves: [], grade: -3 },
-  { length: 560, curves: [{ at: 80, len: 25, angle: -90 }, { at: 380, len: 60, angle: 30 }], grade: 6 },
-  { length: 380, curves: [{ at: 200, len: 40, angle: -45 }], grade: -5 },
-  { length: 470, curves: [{ at: 120, len: 22, angle: 90 }], grade: 2 },
-];
-
-export const BUS_OPTS = { profile: 'bus', route: BUS_ROUTE, vmax: 13, aAcc: 1.3, aDec: 1.5, dwell: 15, vibration: 0.6, vibrationStill: 0.06 };
-
-// A street tram: tight curves at junctions, a hill, medium hops.
-export const TRAM_ROUTE = [
-  { length: 520, curves: [{ at: 180, len: 35, angle: 80 }], grade: 3 },
-  { length: 410, curves: [{ at: 120, len: 90, angle: -35 }], grade: -6 },
-  { length: 680, curves: [{ at: 60, len: 30, angle: -90 }, { at: 400, len: 120, angle: 40 }], grade: 5 },
-  { length: 450, curves: [], grade: -2 },
-];
-
-export const TRAM_OPTS = { profile: 'tram', route: TRAM_ROUTE, vmax: 14, aAcc: 1.1, aDec: 1.3, dwell: 20, vibration: 0.4, vibrationStill: 0.04 };
-
 export const DEFAULT_ROUTE = [
   { length: 1450, curves: [{ at: 400, len: 300, angle: 35 }], grade: -2.5 },
   { length: 2100, curves: [{ at: 300, len: 250, angle: -20 }, { at: 1300, len: 400, angle: -60 }], grade: 3 },

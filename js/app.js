@@ -1,7 +1,8 @@
 import { Tracker, createFeeder, packSample, unpackSample, stillStats, detectPlatform } from './tracker.js';
 import { requestMotionPermission, startMotion, keepAwake, motionSupported, startGeo } from './sensors.js';
 import { TunnelScene } from './scene.js';
-import { simulateRide, BUS_OPTS, TRAM_OPTS } from './sim.js';
+import { simulateRide } from './sim.js';
+import { VEHICLES, vehicleOf, vehicleId } from './vehicles.js';
 import { gpsReference, gpsDistance, gpsSpeed } from './gps.js';
 import { analyzeSensorCheck, poseOf } from './sensorcheck.js';
 import * as store from './store.js';
@@ -34,7 +35,7 @@ let rec = null;             // current recording { meta, rows, marks }
 let feeder = null, playT = 0;
 let flushTimer = null, flushedRows = 0, chunkIdx = 0;
 let lastFrame = performance.now();
-let vehicle = 'metro';      // metro | bus (tracker profile)
+let vehicle = 'metro';      // id in VEHICLES (js/vehicles.js)
 let geo = null;             // GPS watch (bus mode)
 let gpsFixes = [];          // [t_ms, lat, lon, acc, speed, heading]
 let gpsRef = null;          // GPS track in the tracker's frame
@@ -48,20 +49,20 @@ const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padSt
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 // ---------------- vehicle ----------------
-function setVehicle(v) {
-  vehicle = ['bus', 'tram'].includes(v) ? v : 'metro';
-  try { localStorage.setItem('mole.vehicle', vehicle); } catch {}
-  $('veh-metro').setAttribute('aria-checked', String(vehicle === 'metro'));
-  $('veh-bus').setAttribute('aria-checked', String(vehicle === 'bus'));
-  $('veh-tram').setAttribute('aria-checked', String(vehicle === 'tram'));
-  for (const el of document.querySelectorAll('[data-bus], [data-tram]')) {
-    if (!el.dataset.metro) el.dataset.metro = el.textContent;
-    el.textContent = el.dataset[vehicle] || el.dataset.metro;
-  }
+// The switch and the setup copy come from the vehicle registry.
+for (const [id, v] of Object.entries(VEHICLES)) {
+  const b = document.createElement('button');
+  b.type = 'button'; b.setAttribute('role', 'radio'); b.dataset.vehicle = id; b.textContent = v.label;
+  b.addEventListener('click', () => setVehicle(id));
+  $('veh-switch').appendChild(b);
 }
-$('veh-metro').addEventListener('click', () => setVehicle('metro'));
-$('veh-bus').addEventListener('click', () => setVehicle('bus'));
-$('veh-tram').addEventListener('click', () => setVehicle('tram'));
+function setVehicle(v) {
+  vehicle = vehicleId(v);
+  try { localStorage.setItem('mole.vehicle', vehicle); } catch {}
+  for (const b of $('veh-switch').children) b.setAttribute('aria-checked', String(b.dataset.vehicle === vehicle));
+  const copy = vehicleOf(vehicle).copy;
+  for (const el of document.querySelectorAll('[data-copy]')) el.textContent = copy[el.dataset.copy] ?? VEHICLES.metro.copy[el.dataset.copy];
+}
 try { setVehicle(localStorage.getItem('mole.vehicle') || 'metro'); } catch { setVehicle('metro'); }
 
 // ---------------- step 1: offline ----------------
@@ -96,7 +97,7 @@ $('btn-sensors').addEventListener('click', async () => {
   // Some browsers expose requestPermission but still deliver events, so judge by the data.
   if (!motion) motion = startMotion(onSample);
   setStatus(ui.sensorStatus, 'Waiting for sensor data…');
-  if (vehicle !== 'metro') askLocation();
+  if (vehicleOf(vehicle).gps) askLocation();
   setTimeout(() => checkSensors(res), 1500);
 });
 
@@ -109,7 +110,7 @@ function checkSensors(permission) {
     return;
   }
   const gyro = s.hasGyro ? 'gyroscope ✓' : 'no gyroscope: turns will not be drawn';
-  const loc = vehicle !== 'metro' && locationNote ? ` · ${locationNote}` : '';
+  const loc = vehicleOf(vehicle).gps && locationNote ? ` · ${locationNote}` : '';
   setStatus(ui.sensorStatus, `Accelerometer ✓ · ${gyro} · ${s.hz} Hz${loc}`, s.hasGyro && !/blocked/.test(loc) ? 'ok' : 'bad');
   $('st-sensors').classList.add('done');
   $('btn-sensors').hidden = true;
@@ -258,7 +259,7 @@ ui.start.addEventListener('click', () => {
   ui.start.disabled = true;
   setStatus(ui.calibStatus, "Don't touch the phone…");
   gpsFixes = []; gpsRef = null;
-  if (vehicle !== 'metro' && !geo) { // above ground: GPS as a reference
+  if (vehicleOf(vehicle).gps && !geo) { // above ground: GPS as a reference
     geo = startGeo((fix) => gpsFixes.push(fix), (err) => {
       geo = null;
       toast(err === 'denied' ? 'No location access: the GPS comparison is off.' : 'GPS is unavailable: the comparison is off.', 'warn');
@@ -298,7 +299,7 @@ function calibrateStep(tMs, a, r) {
   flushTimer = setInterval(flush, 5000);
   mode = 'live';
   enterRide(false);
-  toast(`Calibrated. Waiting for the ${vehicle === 'metro' ? 'train' : vehicle} to pull away.`);
+  toast(`Calibrated. Waiting for the ${vehicleOf(vehicle).noun} to pull away.`);
 }
 
 async function flush() {
@@ -338,11 +339,14 @@ function setBarPhase(phase) {
 }
 
 let rideKind = 'metro';      // vehicle of the ride on screen (live or replay)
-const isStreet = () => rideKind !== 'metro';
+const rideVehicle = () => vehicleOf(rideKind);
+const confirmMode = () => rideVehicle().stops === 'confirm';
+let confirmed = new Set();  // halts the rider marked as real stops (confirm mode)
 
 function enterRide(isReplay, kind = vehicle) {
-  rideKind = kind;
-  $('hud-stops-label').textContent = isStreet() ? 'halts' : 'stops';
+  rideKind = vehicleId(kind);
+  confirmed = new Set();
+  $('hud-stops-label').textContent = confirmMode() ? 'halts' : 'stops';
   ui.setup.hidden = true;
   ui.ride.hidden = false;
   ui.done.hidden = true;
@@ -356,7 +360,7 @@ function enterRide(isReplay, kind = vehicle) {
     scene.clear();
     scene.setMode('follow');
   }
-  scene.numberStops = !isStreet();
+  scene.numberStops = !confirmMode();
   scene.resize();
 }
 
@@ -394,6 +398,7 @@ async function finishRide() {
   }
   mode = 'done';
   ui.debug.hidden = true;
+  confirmed = new Set(rec?.meta?.confirmedStops || (rec ? [] : tracker.stops.map((_, k) => k).slice(1)));
   const last = tracker.finish();
   if (last) {
     scene.addSegment(last.points, { open: !last.arrived });
@@ -415,29 +420,65 @@ function showSummary() {
   const open = segs.find((s) => s.open);
   const total = tr.totalDist;
   const dur = segs.reduce((s, x) => s + x.dur, 0);
-  const n = segs.length;
   const gps = gpsRef?.aligned ? gpsRef.local : null;
   const pct = (est, ref) => `${est >= ref ? '+' : '−'}${Math.round(Math.abs(est / ref - 1) * 100)}%`;
-  const gpsTotal = gps ? segs.reduce((s, x) => s + gpsDistance(gps, x.t0, x.t1), 0) : 0;
+  const gpsLen = (list) => (gps ? list.reduce((s, x) => s + gpsDistance(gps, x.t0, x.t1), 0) : 0);
+  const gpsTotal = gpsLen(segs);
   const gpsLine = gps && gpsTotal > 50
     ? `<p class="num"><span class="gps-dot"></span>GPS ${fmtDist(gpsTotal)}: sensors are ${pct(total, gpsTotal)} off</p>`
     : '';
   const openNote = open
     ? '<p class="note">The last segment (grey) has no closing stop, so its speed drift was not corrected.</p>'
     : '';
-  $('done-summary').innerHTML = n
-    ? `<p class="num">${plural(n, 'segment', 'segments')} · ${fmtDist(total)} · ${fmtTime(dur)} in motion</p>${gpsLine}${openNote}` +
-      (isStreet() ? '<p class="note">On streets every halt counts, traffic lights and crossings included: the speed is exactly zero there, which keeps the drift in check.</p>' : '')
-    : '<p class="note">No segments recorded. The vehicle has to pull away and stop again.</p>';
-  const row = (label, s) => {
-    const g = gps ? gpsDistance(gps, s.t0, s.t1) : 0;
-    const gpsCells = gps ? `<td>${g > 20 ? fmtDist(g) : '—'}</td><td>${g > 20 ? pct(s.dist, g) : '—'}</td>` : '';
-    return `<tr class="num"><td>${label}</td><td>${fmtDist(s.dist)}</td>${gpsCells}<td>${fmtTime(s.dur)}</td><td>${Math.round(s.vmax * 3.6)} km/h</td></tr>`;
-  };
-  $('done-table').innerHTML = n
-    ? `<tr><th>Segment</th><th>Length</th>${gps ? '<th>GPS</th><th>Error</th>' : ''}<th>Time</th><th>Top speed</th></tr>` +
-      segs.map((s, i) => row(s.open ? `${i} → no stop` : `${i} → ${i + 1}`, s)).join('')
+  const halts = tr.stops.length - 1; // stops[k] ends segments[k-1]
+  const confirm = confirmMode();
+
+  // Segments as the rider sees them: in confirm mode, between confirmed stops only.
+  const isBreak = (k) => !confirm || confirmed.has(k);
+  const groups = [];
+  let cur = null, from = 0, num = 0;
+  segs.forEach((s, i) => {
+    if (!cur) cur = { dist: 0, dur: 0, vmax: 0, list: [], from };
+    cur.dist += s.dist; cur.dur += s.dur; cur.vmax = Math.max(cur.vmax, s.vmax); cur.list.push(s);
+    const stopNo = s.open ? null : i + 1;
+    if (s.open || i === segs.length - 1 || isBreak(stopNo)) {
+      const to = s.open ? 'no stop' : isBreak(stopNo) ? String(++num) : 'finish';
+      groups.push({ ...cur, label: `${cur.from} → ${to}` });
+      from = to; cur = null;
+    }
+  });
+
+  const head = segs.length
+    ? confirm
+      ? `<p class="num">${fmtDist(total)} · ${fmtTime(dur)} in motion · ${plural(halts, 'halt', 'halts')}, ${confirmed.size} marked as stops</p>`
+      : `<p class="num">${plural(segs.length, 'segment', 'segments')} · ${fmtDist(total)} · ${fmtTime(dur)} in motion</p>`
     : '';
+  const haltList = confirm && halts
+    ? `<div class="halts-head"><h3>Halts</h3><p class="note">Every halt, traffic lights included, resets the speed drift. Mark the ones that were real stops to split the route there.</p></div><ul class="halts">` +
+      tr.stops.slice(1).map((st, j) => {
+        const k = j + 1, on = confirmed.has(k);
+        const when = fmtTime(st.t - tr.stops[0].t);
+        const stood = st.dwell >= 1 ? ` · stood ${Math.round(st.dwell)} s` : '';
+        return `<li><span class="num">${when} into the ride${stood} · ${fmtDist(st.dist ?? 0)} since the last halt</span>` +
+          `<button type="button" data-halt="${k}" aria-pressed="${on}">${on ? 'Stop ✓' : 'Stop?'}</button></li>`;
+      }).join('') + '</ul>'
+    : '';
+  $('done-summary').innerHTML = segs.length
+    ? head + gpsLine + openNote + haltList
+    : '<p class="note">No segments recorded. The vehicle has to pull away and stop again.</p>';
+  const row = (g) => {
+    const gl = gpsLen(g.list);
+    const gpsCells = gps ? `<td>${gl > 20 ? fmtDist(gl) : '—'}</td><td>${gl > 20 ? pct(g.dist, gl) : '—'}</td>` : '';
+    return `<tr class="num"><td>${g.label}</td><td>${fmtDist(g.dist)}</td>${gpsCells}<td>${fmtTime(g.dur)}</td><td>${Math.round(g.vmax * 3.6)} km/h</td></tr>`;
+  };
+  $('done-table').innerHTML = groups.length
+    ? `<tr><th>${confirm ? 'Between stops' : 'Segment'}</th><th>Length</th>${gps ? '<th>GPS</th><th>Error</th>' : ''}<th>Time</th><th>Top speed</th></tr>` +
+      groups.map(row).join('')
+    : '';
+  if (confirm) {
+    let n = 0;
+    scene.setStopLabels(tr.stops.map((st, k) => (k === 0 ? 'start' : confirmed.has(k) ? String(++n) : null)));
+  }
   $('done-profile').innerHTML = elevationProfile(tr);
   $('share-note').textContent = rec
     ? 'The recording keeps the raw sensor data: you can open it here again or send it over to tune the algorithm.'
@@ -473,6 +514,19 @@ function elevationProfile(tr) {
     `<div class="profile-cap"><span>Elevation relative to the start · green dots are stops</span><span>${fmtDist(xs.at(-1))}</span></div></div>`;
 }
 
+// Marking a halt as a real stop (confirm mode): saved with the ride.
+$('done-summary').addEventListener('click', (e) => {
+  const k = +e.target.dataset?.halt;
+  if (!k) return;
+  if (confirmed.has(k)) confirmed.delete(k); else confirmed.add(k);
+  const list = [...confirmed].sort((a, b) => a - b);
+  if (rec?.meta) {
+    rec.meta.confirmedStops = list;
+    if (rec.meta.id) store.updateRideMeta(rec.meta.id, { confirmedStops: list });
+  }
+  showSummary();
+});
+
 $('btn-share').addEventListener('click', () => exportRecording(buildRecording()));
 
 function buildRecording() {
@@ -498,8 +552,8 @@ async function exportRecording(r) {
 // ---------------- replay / demo ----------------
 $('btn-demo').addEventListener('click', () => {
   const seed = Math.floor(Math.random() * 1000);
-  const opts = { bus: BUS_OPTS, tram: TRAM_OPTS }[vehicle];
-  const { recording } = simulateRide(opts ? { ...opts, gps: true, seed } : { seed });
+  const v = vehicleOf(vehicle);
+  const { recording } = simulateRide({ ...v.demo, gps: v.gps, seed });
   startReplay(recording, DEMO_SPEED);
 });
 $('btn-open').addEventListener('click', () => $('file-input').click());
@@ -535,7 +589,7 @@ async function refreshSaved() {
   for (const r of rides) {
     const li = document.createElement('li');
     const d = new Date(r.startedAt);
-    const label = `${{ bus: 'Bus', tram: 'Tram' }[r.profile] || 'Metro'} · ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}, ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} · ${plural(r.stops ?? 0, 'stop', 'stops')} · ${fmtDist(r.dist ?? 0)}`;
+    const label = `${vehicleOf(r.profile).label} · ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}, ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} · ${plural(r.stops ?? 0, 'stop', 'stops')} · ${fmtDist(r.dist ?? 0)}`;
     li.innerHTML = '<span class="num"></span><div class="acts"><button data-a="play">View</button><button data-a="file">File</button><button data-a="del">Delete</button></div>';
     li.querySelector('span').textContent = label;
     li.addEventListener('click', async (e) => {
@@ -579,7 +633,7 @@ function handleEvents() {
         scene.addStop(ev.stop.p, ev.stop.n, tracker.psi);
         scene.setLive([]);
         const s = ev.stop;
-        toast(isStreet()
+        toast(confirmMode()
           ? `Halted after ${fmtDist(s.dist)} (${fmtTime(s.dur)}, top ${Math.round(s.vmax * 3.6)} km/h)`
           : `Stop ${s.n}: ${fmtDist(s.dist)} in ${fmtTime(s.dur)}, top ${Math.round(s.vmax * 3.6)} km/h`, 'good', 7000);
         break;
@@ -627,10 +681,10 @@ requestAnimationFrame(frame);
 /** Redraws the GPS reference track (at most once a second, or when forced). */
 function updateGps(force = false) {
   const hud = $('hud-gps');
-  if (!tracker || mode === 'done' || !isStreet()) { hud.hidden = true; if (!force) return; }
+  if (!tracker || mode === 'done' || !rideVehicle().gps) { hud.hidden = true; if (!force) return; }
   if (!tracker) return;
   if (!gpsFixes.length) {
-    hud.hidden = mode === 'done' || !isStreet();
+    hud.hidden = mode === 'done' || !rideVehicle().gps;
     $('hud-gps-speed').textContent = mode === 'live' ? (geo ? 'waiting' : 'off') : 'none';
     return;
   }

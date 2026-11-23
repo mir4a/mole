@@ -15,6 +15,8 @@
 // Sample format: { t: seconds, a: [x,y,z] m/s² incl. gravity (device frame),
 //                  r: [alpha, beta, gamma] deg/s from DeviceMotionEvent.rotationRate or null }
 
+import { vehicleOf, vehicleId } from './vehicles.js';
+
 export const DEG = Math.PI / 180;
 
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -64,45 +66,11 @@ const DEFAULTS = {
   pointStep: 2,       // m between stored path points
 };
 
-// Per-vehicle tuning on top of DEFAULTS (which are tuned for the metro).
-export const PROFILES = {
-  metro: {},
-  bus: {
-    departAcc: 0.25,       // idling engine shakes more than a train at a platform
-    departHold: 0.3,
-    minStillSec: 1.0,      // traffic-light stops can be short
-    stopAcc: 0.3,
-    slopeAcc: 0.8,         // stops on hills, up to ~8 %
-    slopeStillSec: 4,
-    maxPitch: 10 * DEG,    // street grades are much steeper than metro ones
-    moveRate: 1.2,         // a bus turns at up to ~30°/s; a hand moves a phone faster
-    minSegDist: 8,
-    lockSec: 2.5,          // pull-aways often start with a turn into traffic
-    fAcc: 0.6,             // weaker pushes are mostly body roll and a phone rocking on a seat
-    vMax: 80 / 3.6,
-  },
-  // Rails like the metro (no sideslip, smoother than a bus), streets like a bus:
-  // tight junction curves (~20 m radius), traffic lights, hills.
-  tram: {
-    departAcc: 0.2,
-    departHold: 0.35,
-    minStillSec: 1.2,
-    stopAcc: 0.25,
-    slopeAcc: 0.8,
-    slopeStillSec: 4,
-    maxPitch: 8 * DEG,
-    moveRate: 1.0,         // trams turn at up to ~20°/s
-    minSegDist: 10,
-    lockSec: 2,
-    fAcc: 0.5,
-    vMax: 80 / 3.6,
-  },
-};
-
 export class Tracker {
   constructor(opts = {}) {
-    this.profile = PROFILES[opts.profile] ? opts.profile : 'metro';
-    this.o = { ...DEFAULTS, ...PROFILES[this.profile], ...opts };
+    // per-vehicle tuning lives in js/vehicles.js
+    this.profile = vehicleId(opts.profile);
+    this.o = { ...DEFAULTS, ...vehicleOf(this.profile).tracker, ...opts };
     this.platform = opts.platform === 'webkit' ? 'webkit' : 'spec';
     // A sensor check (js/sensorcheck.js) measures the conventions directly;
     // without one they are guessed from the platform.

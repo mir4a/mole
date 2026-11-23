@@ -34,6 +34,19 @@ export async function saveRideMeta(meta) {
   try { await tx(['rides'], 'readwrite', (t) => t.objectStore('rides').put(meta)); } catch {}
 }
 
+/** Merges fields into a saved ride's metadata. */
+export async function updateRideMeta(id, patch) {
+  try {
+    const db = await open();
+    const meta = await new Promise((res) => {
+      const rq = db.transaction('rides').objectStore('rides').get(id);
+      rq.onsuccess = () => res(rq.result);
+      rq.onerror = () => res(null);
+    });
+    if (meta) await saveRideMeta({ ...meta, ...patch });
+  } catch {}
+}
+
 export async function appendChunk(rideId, idx, rows) {
   try { await tx(['chunks'], 'readwrite', (t) => t.objectStore('chunks').put({ rideId, idx, rows })); } catch {}
 }

@@ -53,6 +53,26 @@ On synthetic bus rides (`BUS_OPTS` in `js/sim.js`) segment lengths come out
 within about 0–10 %; the worst case is a segment with a hill in the middle,
 because the grade inside a segment is interpolated between the two stops.
 
+## Vehicles
+
+Everything that differs between kinds of vehicle lives in `js/vehicles.js`,
+one object per vehicle:
+
+- `tracker`: algorithm tuning layered over the tracker's defaults (stop and
+  departure thresholds, how strong a push must be to teach the forward axis,
+  grade and speed limits, how fast a turn may be before it counts as the phone
+  being picked up);
+- `gps`: record GPS as a reference track;
+- `stops`: `'stations'` numbers every standstill (metro); `'confirm'` shows
+  standstills as unnumbered halts, lights and crossings included, and the rider
+  marks the real stops after the ride (bus, tram). Every standstill still resets
+  the speed drift either way;
+- `copy`: the setup-screen texts (`data-copy` keys in `index.html`);
+- `demo`: the synthetic route behind *Demo ride*.
+
+Adding a vehicle is adding an object there; the vehicle switch, setup texts,
+ride view and demo pick it up.
+
 ## Run it
 
 It is a static site with no build step. Sensors need HTTPS (or `localhost`).
@@ -77,6 +97,7 @@ replayed through the algorithm with *Open recording*.
 - `js/sim.js`: synthetic metro ride generator (demo and tests)
 - `js/scene.js`: three.js view (tunnel tubes, platforms, follow and orbit cameras)
 - `js/sensors.js`: DeviceMotion, iOS permission, screen wake lock
+- `js/vehicles.js`: per-vehicle tuning, behaviour, texts and demo routes
 - `js/sensorcheck.js`: one-time sensor check (accelerometer sign, gyro axes)
 - `js/gps.js`: GPS reference track for bus mode (local metres, alignment, distances)
 - `js/store.js`: IndexedDB storage of rides
