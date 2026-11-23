@@ -7,11 +7,11 @@ import { gpsReference, gpsDistance } from '../js/gps.js';
 const cases = [
   { name: 'phone leaning on window, spec gyro', opts: {} },
   { name: 'phone flat on seat, rotated 120°', opts: { phone: { yaw: 120, pitch: 0, roll: 0 }, seed: 3 } },
-  { name: 'old WebKit gyro axis order', opts: { gyroMap: 'xyz', seed: 11 } },
+  { name: 'iPhone Safari motion conventions', opts: { gyroMap: 'webkit', seed: 11 } },
   { name: 'big accel bias 0.1 m/s²', opts: { accBias: [0.1, -0.1, 0.1], seed: 5 } },
   { name: 'city bus, phone on the seat', opts: { ...BUS_OPTS, phone: { yaw: 70, pitch: 0, roll: 0 }, seed: 9 } },
-  { name: 'city bus, phone on the window, iOS gyro order', opts: { ...BUS_OPTS, gyroMap: 'xyz', seed: 4 } },
-  { name: 'tram, phone on the window, iOS gyro order', opts: { ...TRAM_OPTS, gyroMap: 'xyz', seed: 6 } },
+  { name: 'city bus, phone on the window, iPhone', opts: { ...BUS_OPTS, gyroMap: 'webkit', seed: 4 } },
+  { name: 'tram, phone on the window, iPhone', opts: { ...TRAM_OPTS, gyroMap: 'webkit', seed: 6 } },
   { name: 'tram, phone on the seat', opts: { ...TRAM_OPTS, phone: { yaw: -40, pitch: 0, roll: 0 }, seed: 15 } },
 ];
 

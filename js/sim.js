@@ -61,7 +61,8 @@ export const DEFAULT_ROUTE = [
 /**
  * @param {object} o
  *   route, hz, seed, phone: {yaw,pitch,roll} in degrees (how the phone sits in the car),
- *   accBias [3] m/s², gyroBias [3] deg/s, gyroMap 'spec'|'xyz' (how rotationRate is reported)
+ *   accBias [3] m/s², gyroBias [3] deg/s, gyroMap 'spec'|'webkit' (how the browser reports motion; 'webkit' = iPhone Safari:
+ *   rotationRate in x,y,z order and the accelerometer with the opposite sign)
  */
 export function simulateRide(o = {}) {
   const route = o.route || DEFAULT_ROUTE;
@@ -96,7 +97,8 @@ export function simulateRide(o = {}) {
 
   const emit = (fCar, wCar, moving) => {
     const vib = moving ? vibMove : vibStill;
-    const f = mulT(M, fCar).map((v, i) => v + accBias[i] + gauss(r) * vib);
+    const sign = gyroMap === 'webkit' ? -1 : 1; // iPhone: opposite handedness
+    const f = mulT(M, fCar).map((v, i) => sign * v + accBias[i] + gauss(r) * vib);
     const wd = mulT(M, wCar).map((v, i) => v / DEG + gyroBias[i] + gauss(r) * (moving ? 0.6 : 0.05));
     const rr = gyroMap === 'spec' ? [wd[2], wd[0], wd[1]] : [wd[0], wd[1], wd[2]];
     samples.push(packSample(t * 1000, f, rr));

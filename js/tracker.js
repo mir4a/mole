@@ -29,9 +29,15 @@ const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 // The spec says alpha=z, beta=x, gamma=y, but implementations have disagreed
 // over the years. Both candidates are tried; the one whose rotation lines up
 // with the vertical while the train turns wins.
+//
+// 'webkit' (iPhone Safari) reports alpha=x, beta=y, gamma=z, and its motion
+// data also has the opposite handedness: accelerometer and gyroscope disagree
+// in sign. Inside the data that is undetectable (a mirrored ride is just as
+// physical), but two Prague metro rides checked against the real line map
+// came out mirrored turn for turn, so the gyro is negated here.
 export const GYRO_MAPS = {
   spec: (r) => [r[1], r[2], r[0]],
-  xyz: (r) => [r[0], r[1], r[2]],
+  webkit: (r) => [-r[0], -r[1], -r[2]],
 };
 
 const DEFAULTS = {
@@ -103,7 +109,7 @@ export class Tracker {
     this.quietStd = Math.max(st.stdA, 0.005);
     this.moveStd = null;
     this.gyroMap = this.gyroMap || 'spec';
-    this.mapEnergy = this.mapEnergy || { spec: [0, 0], xyz: [0, 0] };
+    this.mapEnergy = this.mapEnergy || { spec: [0, 0], webkit: [0, 0] };
 
     if (!this.calibrated) {
       this.pos = [0, 0, 0];
@@ -343,7 +349,7 @@ export class Tracker {
     const ratio = (e) => (e[1] > 1e-6 ? e[0] / e[1] : 0);
     const enough = this.mapEnergy.spec[1] > 0.002; // need some real turning
     if (!enough) return;
-    const best = ratio(this.mapEnergy.xyz) > ratio(this.mapEnergy.spec) * 1.3 ? 'xyz' : 'spec';
+    const best = ratio(this.mapEnergy.webkit) > ratio(this.mapEnergy.spec) * 1.3 ? 'webkit' : 'spec';
     if (best !== this.gyroMap) {
       this.gyroMap = best;
       this.events.push({ type: 'gyromap', map: best });
