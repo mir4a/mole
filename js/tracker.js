@@ -56,7 +56,9 @@ const DEFAULTS = {
   slopeAcc: 0.45,     // m/s², allowed when standing on a grade (~4.5 %) ...
   slopeStillSec: 6,   // ... if it lasts this long
   lockSec: 1.5,       // s of strong accel needed to lock the forward axis
+  fAcc: 0.3,          // m/s², only stronger horizontal accel teaches the forward axis
   maxPitch: 4.5 * DEG,
+  vMax: 100 / 3.6,    // m/s; faster than any metro train runs
   moveRate: 0.6,      // rad/s; faster rotation means the phone itself was moved
   minSegDist: 15,     // m; shorter "rides" are treated as false departures
   pointStep: 2,       // m between stored path points
@@ -75,6 +77,9 @@ export const PROFILES = {
     maxPitch: 10 * DEG,    // street grades are much steeper than metro ones
     moveRate: 1.2,         // a bus turns at up to ~30°/s; a hand moves a phone faster
     minSegDist: 8,
+    lockSec: 2.5,          // pull-aways often start with a turn into traffic
+    fAcc: 0.6,             // weaker pushes are mostly body roll and a phone rocking on a seat
+    vMax: 80 / 3.6,
   },
   // Rails like the metro (no sideslip, smoother than a bus), streets like a bus:
   // tight junction curves (~20 m radius), traffic lights, hills.
@@ -88,6 +93,9 @@ export const PROFILES = {
     maxPitch: 8 * DEG,
     moveRate: 1.0,         // trams turn at up to ~20°/s
     minSegDist: 10,
+    lockSec: 2,
+    fAcc: 0.5,
+    vMax: 80 / 3.6,
   },
 };
 
@@ -140,7 +148,9 @@ export class Tracker {
     this.v = 0;
     this.state = 'stopped';
     this.win = [];
-    this.lpA = st.meanA.slice();
+    this.gDev = st.meanA.slice();           // gravity as the phone sees it right now
+    this.lpH = [0, 0, 0];                   // low-passed horizontal acceleration
+    this.lpH0 = [0, 0, 0];                  // same, against the gravity of the last stop
     this.lpR = [0, 0, 0];
     this.lastT = samples.at(-1)?.t ?? null;
     this.departT = 0; this.loudT = 0; this.quietT = 0; this.stillT = 0; this.slopeT = 0;
@@ -180,19 +190,31 @@ export class Tracker {
     while (this.win.length && s.t - this.win[0].t > o.winSec) this.win.shift();
     this.winStd = stdA(this.win);
 
-    // low-pass (~1 Hz) for direction / departure detection
-    const k = 1 - Math.exp(-dt * 2 * Math.PI * 1.0);
-    for (let i = 0; i < 3; i++) this.lpA[i] += (s.a[i] - this.lpA[i]) * k;
     const rRaw = s.r ? sub(s.r, this.rBias) : [0, 0, 0];
     const kr = 1 - Math.exp(-dt * 2 * Math.PI * 0.3);
     for (let i = 0; i < 3; i++) this.lpR[i] += (rRaw[i] - this.lpR[i]) * kr;
-
-    const hv = sub(this.lpA, this.g0);
-    const hUp = dot(hv, this.U0);
-    const h = sub(hv, scale(this.U0, hUp));
-    this.hMag = len(h);
-
     const w = this.mapGyro(rRaw);
+
+    // Horizontal acceleration (low-passed ~1 Hz), two ways:
+    //  h  - against gravity carried through the gyro's rotation since the last
+    //       stop. A bus body rolls in turns, squats and dives, kneels at stops,
+    //       and a phone rocks on a seat; none of that is acceleration.
+    //  h0 - against the gravity measured at the last stop: doesn't drift.
+    // Departures and the forward axis use h; a stop needs either to be calm.
+    this.gDev = this.state === 'moving' ? rotateVec(this.gDev, w, dt) : this.g0;
+    const k = 1 - Math.exp(-dt * 2 * Math.PI * 1.0);
+    const horiz = (g) => {
+      const up = normalize(g), d = sub(s.a, g);
+      return sub(d, scale(up, dot(d, up)));
+    };
+    const hi = horiz(this.gDev), hi0 = horiz(this.g0);
+    for (let i = 0; i < 3; i++) {
+      this.lpH[i] += (hi[i] - this.lpH[i]) * k;
+      this.lpH0[i] += (hi0[i] - this.lpH0[i]) * k;
+    }
+    const h = this.lpH;
+    this.hMag = len(h);
+    const hCalm = Math.min(this.hMag, len(this.lpH0));
     if (len(w) > o.moveRate && this.seg) this.seg.handled = true; // a train never turns this fast
     if (len(w) > o.moveRate && !this.movedAlert) {
       this.movedAlert = true;
@@ -204,8 +226,8 @@ export class Tracker {
     this.quietT = quiet ? this.quietT + dt : 0;
     // Smooth acceleration and braking are quiet too, so a stop also needs
     // the horizontal acceleration to be gone (measured on a real ride).
-    this.stillT = quiet && this.hMag < o.stopAcc ? this.stillT + dt : 0;
-    this.slopeT = quiet && this.hMag < o.slopeAcc ? this.slopeT + dt : 0;
+    this.stillT = quiet && hCalm < o.stopAcc ? this.stillT + dt : 0;
+    this.slopeT = quiet && hCalm < o.slopeAcc ? this.slopeT + dt : 0;
 
     if (this.state === 'stopped') {
       if (quiet) {
@@ -255,7 +277,7 @@ export class Tracker {
     // sideways and, on a bus, is as strong as the acceleration along the road.
     if (rate > 2 * DEG) return;
     const c1 = dot(h, this.E1), c2 = dot(h, this.E2);
-    if (Math.hypot(c1, c2) < this.o.departAcc * 0.8) return;
+    if (Math.hypot(c1, c2) < this.o.fAcc) return;
     const f = this.fStats;
     f.sxx += c1 * c1 * dt; f.sxy += c1 * c2 * dt; f.syy += c2 * c2 * dt;
     if (!this.F) { f.sx += c1 * dt; f.sy += c2 * dt; }
@@ -286,7 +308,7 @@ export class Tracker {
     const aF = dot(s.a, this.F) - this.gMag * Math.sin(this.theta) - this.biasPrior;
     this.v += aF * dt;
     this.aF = aF;
-    const vp = Math.max(this.v, 0);
+    const vp = clamp(this.v, 0, this.o.vMax);
     const d = vp * dt;
     this.pos = add(this.pos, dirVec(this.psi, this.theta, d));
     this.seg.liveDist += d;
@@ -333,12 +355,13 @@ export class Tracker {
     const quietSamples = this.win.filter((x) => x.t >= tStop);
     const mA = stillStats(quietSamples.length ? quietSamples : this.win).meanA;
     this.g0 = mA.slice();
+    this.gDev = mA.slice();
     this.upStation = normalize(mA);
     if (!this.F && this.fStats.time > 0.3) this.lockF();
     const thetaEnd = this.F ? clamp(Math.asin(clamp(dot(normalize(mA), this.F), -1, 1)), -this.o.maxPitch, this.o.maxPitch) : 0;
 
-    // first ride: refine the axis with braking samples too, keeping the sign
-    if (this.F && this.segments.length === 0) this.lockF(this.F);
+    // refine the axis at every stop with all straight-line samples so far, keeping the sign
+    if (this.F && this.fStats.time >= this.o.lockSec) this.lockF(this.F);
     if (this.mapEnergy && this.F) this.chooseGyroMap();
 
     let result = null;
@@ -348,7 +371,7 @@ export class Tracker {
       result = integrateSegment(samples, {
         F: this.F, L: this.L, U: this.U0, gMag: this.gMag, rBias: seg.rBias,
         map: (r) => scale(GYRO_MAPS[this.gyroMap](r), this.gyroSign), p0: seg.p0, psi0: seg.psi0, theta0: seg.theta0, up0: seg.up0,
-        thetaEnd, maxPitch: this.o.maxPitch, step: this.o.pointStep,
+        thetaEnd, maxPitch: this.o.maxPitch, vMax: this.o.vMax, step: this.o.pointStep,
       });
     }
 
@@ -416,7 +439,7 @@ export class Tracker {
         F: this.F, L: this.L, U: this.U0, gMag: this.gMag, rBias: seg.rBias,
         map: (r) => scale(GYRO_MAPS[this.gyroMap](r), this.gyroSign), p0: seg.p0, psi0: seg.psi0, theta0: seg.theta0, up0: seg.up0,
         thetaEnd: null, fixedBias: arrived ? undefined : this.biasPrior,
-        maxPitch: this.o.maxPitch, step: this.o.pointStep,
+        maxPitch: this.o.maxPitch, vMax: this.o.vMax, step: this.o.pointStep,
       });
       if (result.dist >= this.o.minSegDist) {
         this.path.push(...result.points.slice(1));
@@ -466,6 +489,14 @@ export function stationFrame(up, F, psi) {
   const x = sub(scale(fh, c), scale(lh, s));
   const y = add(scale(fh, s), scale(lh, c));
   return [x, y, z];
+}
+
+/** A world-fixed vector as seen from a body turning at rates w (rad/s) for dt. */
+export function rotateVec(v, w, dt) {
+  const th = len(w) * dt;
+  if (th < 1e-12) return v;
+  const k = scale(w, 1 / len(w)), c = Math.cos(th), sn = Math.sin(th), kd = dot(k, v), kx = cross(k, v);
+  return [0, 1, 2].map((i) => v[i] * c - kx[i] * sn + k[i] * kd * (1 - c));
 }
 
 /** Advances a device -> world rotation by body rates w (rad/s) over dt (Rodrigues). */
@@ -556,7 +587,7 @@ export function integrateSegment(samples, c) {
   let pos = c.p0.slice(), d = 0, vmax = 0;
   const points = [pos.slice()];
   for (let i = 0; i < n; i++) {
-    const vi = Math.max(vr[i] - bias * (samples[i].t - t0), 0);
+    const vi = clamp(vr[i] - bias * (samples[i].t - t0), 0, c.vMax ?? Infinity);
     vmax = Math.max(vmax, vi);
     const step = vi * dts[i];
     pos = add(pos, dirVec(psi[i], th[i], step));

@@ -96,6 +96,7 @@ $('btn-sensors').addEventListener('click', async () => {
   // Some browsers expose requestPermission but still deliver events, so judge by the data.
   if (!motion) motion = startMotion(onSample);
   setStatus(ui.sensorStatus, 'Waiting for sensor data…');
+  if (vehicle !== 'metro') askLocation();
   setTimeout(() => checkSensors(res), 1500);
 });
 
@@ -108,11 +109,34 @@ function checkSensors(permission) {
     return;
   }
   const gyro = s.hasGyro ? 'gyroscope ✓' : 'no gyroscope: turns will not be drawn';
-  setStatus(ui.sensorStatus, `Accelerometer ✓ · ${gyro} · ${s.hz} Hz`, s.hasGyro ? 'ok' : 'bad');
+  const loc = vehicle !== 'metro' && locationNote ? ` · ${locationNote}` : '';
+  setStatus(ui.sensorStatus, `Accelerometer ✓ · ${gyro} · ${s.hz} Hz${loc}`, s.hasGyro && !/blocked/.test(loc) ? 'ok' : 'bad');
   $('st-sensors').classList.add('done');
   $('btn-sensors').hidden = true;
   ui.start.disabled = false;
   $('btn-check').disabled = !s.hasGyro;
+}
+
+// Above ground the GPS is the reference; ask for it early so a refusal shows
+// before the ride rather than as a silently empty comparison afterwards.
+let locationNote = '';
+function askLocation() {
+  if (!('geolocation' in navigator)) { locationNote = 'no GPS in this browser'; return; }
+  locationNote = 'asking for location…';
+  navigator.geolocation.getCurrentPosition(
+    () => { locationNote = 'location ✓'; refreshSensorLine(); },
+    (e) => {
+      locationNote = e.code === 1
+        ? 'location blocked: Settings → Privacy & Security → Location Services → Safari Websites → While Using'
+        : 'no GPS fix yet';
+      refreshSensorLine();
+    },
+    { enableHighAccuracy: true, timeout: 15000 },
+  );
+}
+function refreshSensorLine() {
+  if (!motion?.stats.hasAccel) return;
+  checkSensors('granted');
 }
 
 function setStatus(el, text, cls = '') { el.textContent = text; el.className = 'status ' + cls; }
@@ -313,7 +337,12 @@ function setBarPhase(phase) {
   if (phase !== 'ride') $('btn-recal').hidden = true;
 }
 
-function enterRide(isReplay) {
+let rideKind = 'metro';      // vehicle of the ride on screen (live or replay)
+const isStreet = () => rideKind !== 'metro';
+
+function enterRide(isReplay, kind = vehicle) {
+  rideKind = kind;
+  $('hud-stops-label').textContent = isStreet() ? 'halts' : 'stops';
   ui.setup.hidden = true;
   ui.ride.hidden = false;
   ui.done.hidden = true;
@@ -327,6 +356,7 @@ function enterRide(isReplay) {
     scene.clear();
     scene.setMode('follow');
   }
+  scene.numberStops = !isStreet();
   scene.resize();
 }
 
@@ -396,7 +426,8 @@ function showSummary() {
     ? '<p class="note">The last segment (grey) has no closing stop, so its speed drift was not corrected.</p>'
     : '';
   $('done-summary').innerHTML = n
-    ? `<p class="num">${plural(n, 'segment', 'segments')} · ${fmtDist(total)} · ${fmtTime(dur)} in motion</p>${gpsLine}${openNote}`
+    ? `<p class="num">${plural(n, 'segment', 'segments')} · ${fmtDist(total)} · ${fmtTime(dur)} in motion</p>${gpsLine}${openNote}` +
+      (isStreet() ? '<p class="note">On streets every halt counts, traffic lights and crossings included: the speed is exactly zero there, which keeps the drift in check.</p>' : '')
     : '<p class="note">No segments recorded. The vehicle has to pull away and stop again.</p>';
   const row = (label, s) => {
     const g = gps ? gpsDistance(gps, s.t0, s.t1) : 0;
@@ -491,7 +522,7 @@ function startReplay(recording, speed) {
   calibT = recording.samples[calN - 1][0] / 1000;
   playT = 0;
   mode = 'replay';
-  enterRide(true);
+  enterRide(true, recording.profile || 'metro');
   toast(recording.kind === 'synthetic' ? `Demo: synthetic ride, ×${speed}` : `Replaying recording, ×${speed}`);
 }
 
@@ -548,7 +579,9 @@ function handleEvents() {
         scene.addStop(ev.stop.p, ev.stop.n, tracker.psi);
         scene.setLive([]);
         const s = ev.stop;
-        toast(`Stop ${s.n}: ${fmtDist(s.dist)} in ${fmtTime(s.dur)}, top ${Math.round(s.vmax * 3.6)} km/h`, 'good', 7000);
+        toast(isStreet()
+          ? `Halted after ${fmtDist(s.dist)} (${fmtTime(s.dur)}, top ${Math.round(s.vmax * 3.6)} km/h)`
+          : `Stop ${s.n}: ${fmtDist(s.dist)} in ${fmtTime(s.dur)}, top ${Math.round(s.vmax * 3.6)} km/h`, 'good', 7000);
         break;
       }
       case 'handled':
@@ -594,8 +627,13 @@ requestAnimationFrame(frame);
 /** Redraws the GPS reference track (at most once a second, or when forced). */
 function updateGps(force = false) {
   const hud = $('hud-gps');
-  if (!gpsFixes.length || !tracker || mode === 'done') { hud.hidden = true; if (!force) return; }
-  if (!gpsFixes.length || !tracker) return;
+  if (!tracker || mode === 'done' || !isStreet()) { hud.hidden = true; if (!force) return; }
+  if (!tracker) return;
+  if (!gpsFixes.length) {
+    hud.hidden = mode === 'done' || !isStreet();
+    $('hud-gps-speed').textContent = mode === 'live' ? (geo ? 'waiting' : 'off') : 'none';
+    return;
+  }
   const now = performance.now();
   if (!force && now - gpsCheckedAt < 1000) return;
   gpsCheckedAt = now;

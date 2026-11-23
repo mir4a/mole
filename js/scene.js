@@ -11,6 +11,7 @@ const COLORS = {
 export class TunnelScene {
   constructor(container) {
     this.vex = 1; // vertical exaggeration
+    this.numberStops = true; // metro stations get numbers; bus and tram halts don't
     this.k = 1;   // visual scale of tube/platform/labels (grows in overview so they stay visible)
     this.mode = 'follow';
     this.segments = []; // { points (tracker frame), open (no closing stop, uncorrected) }
@@ -145,10 +146,14 @@ export class TunnelScene {
     );
     plat.position.y = -2.5 * this.k;
     g.add(plat);
-    const label = makeLabel(n === 0 ? 'start' : String(n));
-    label.scale.multiplyScalar(this.k);
-    label.position.y *= this.k;
-    g.add(label);
+    if (n === 0 || this.numberStops) {
+      const label = makeLabel(n === 0 ? 'start' : String(n));
+      label.scale.multiplyScalar(this.k);
+      label.position.y *= this.k;
+      g.add(label);
+    } else {
+      plat.scale.set(0.35, 1, 1); // a halt at a light or a crossing: short, unnumbered
+    }
     g.position.copy(this.toThree(p));
     g.rotation.y = heading;
     this.stopGroup.add(g);
