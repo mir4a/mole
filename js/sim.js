@@ -201,3 +201,40 @@ export function simulateRide(o = {}) {
     truth, stopsTruth, trackLengths, truthAtt,
   };
 }
+
+/**
+ * Synthetic sensor check (see sensorcheck.js): the phone held upright, screen
+ * facing the user, then laid flat screen up over ~2 s, with a wobbly hand.
+ * platform 'spec' | 'webkit'; gyroReversed flips the gyro sign (a hypothetical
+ * device), to test that the check notices.
+ */
+export function simulateSensorCheck({ platform = 'spec', gyroReversed = false, seed = 1, turnSec = 2, hz = 60 } = {}) {
+  const r = rng(seed), g = 9.80665, dt = 1 / hz;
+  // world: X right, Y away from the user, Z up. Upright, screen facing the user:
+  // device x = X, y = Z, z = -Y.
+  const C0 = [[1, 0, 0], [0, 0, -1], [0, 1, 0]];
+  const Rx = (b) => [[1, 0, 0], [0, Math.cos(b), -Math.sin(b)], [0, Math.sin(b), Math.cos(b)]];
+  const Ry = (b) => [[Math.cos(b), 0, Math.sin(b)], [0, 1, 0], [-Math.sin(b), 0, Math.cos(b)]];
+  const Rz = (b) => [[Math.cos(b), -Math.sin(b), 0], [Math.sin(b), Math.cos(b), 0], [0, 0, 1]];
+  const total = 1 + turnSec + 1;
+  const att = (t) => {
+    const u = Math.min(Math.max((t - 1) / turnSec, 0), 1);
+    const beta = -Math.PI / 2 * (0.5 - 0.5 * Math.cos(Math.PI * u)); // ease in/out to flat
+    const wob = Math.sin(Math.PI * u);
+    return matMul(Rz(0.15 * wob * Math.sin(7 * t)), matMul(Ry(0.12 * wob * Math.sin(5 * t)), matMul(Rx(beta), C0)));
+  };
+  const samples = [];
+  let Cp = att(0);
+  for (let t = 0; t <= total; t += dt) {
+    const C = att(t);
+    const f = mulT(C, [0, 0, g]).map((v) => v + gauss(r) * 0.05);
+    const dR = matMul(matT(Cp), C);
+    const w = [(dR[2][1] - dR[1][2]) / (2 * dt), (dR[0][2] - dR[2][0]) / (2 * dt), (dR[1][0] - dR[0][1]) / (2 * dt)];
+    Cp = C;
+    const wd = w.map((v) => (gyroReversed ? -v : v) / DEG + gauss(r) * 0.3 + 0.2);
+    const a = platform === 'webkit' ? f.map((v) => -v) : f;
+    const rr = platform === 'webkit' ? [wd[0], wd[1], wd[2]] : [wd[2], wd[0], wd[1]];
+    samples.push({ t, a, r: rr });
+  }
+  return samples;
+}

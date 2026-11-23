@@ -96,8 +96,13 @@ export class Tracker {
     this.profile = PROFILES[opts.profile] ? opts.profile : 'metro';
     this.o = { ...DEFAULTS, ...PROFILES[this.profile], ...opts };
     this.platform = opts.platform === 'webkit' ? 'webkit' : 'spec';
-    this.accSign = this.platform === 'webkit' ? -1 : 1;
-    this.gyroMap = this.platform;
+    // A sensor check (js/sensorcheck.js) measures the conventions directly;
+    // without one they are guessed from the platform.
+    const chk = opts.sensorCheck?.ok ? opts.sensorCheck : null;
+    this.accSign = chk ? chk.accSign : this.platform === 'webkit' ? -1 : 1;
+    this.gyroMap = chk ? chk.gyroMap : this.platform;
+    this.gyroSign = chk ? chk.gyroSign : 1;
+    this.gyroFixed = !!chk;
     this.calibrated = false;
     this.events = [];
   }
@@ -119,7 +124,6 @@ export class Tracker {
     this.fStats = newFStats();
     this.quietStd = Math.max(st.stdA, 0.005);
     this.moveStd = null;
-    this.gyroMap = this.gyroMap || 'spec';
     this.mapEnergy = this.mapEnergy || { spec: [0, 0], webkit: [0, 0] };
 
     if (!this.calibrated) {
@@ -154,6 +158,11 @@ export class Tracker {
 
   // ---------- streaming ----------
 
+  /** Bias-corrected raw rotation rate (deg/s) -> device-frame rate (rad/s). */
+  mapGyro(r) {
+    return scale(GYRO_MAPS[this.gyroMap](r), DEG * this.gyroSign);
+  }
+
   /** Brings a raw sample to the spec's sign conventions. */
   norm(s) {
     return this.accSign === 1 ? s : { t: s.t, a: [-s.a[0], -s.a[1], -s.a[2]], r: s.r };
@@ -183,7 +192,7 @@ export class Tracker {
     const h = sub(hv, scale(this.U0, hUp));
     this.hMag = len(h);
 
-    const w = scale(GYRO_MAPS[this.gyroMap](rRaw), DEG);
+    const w = this.mapGyro(rRaw);
     if (len(w) > o.moveRate && this.seg) this.seg.handled = true; // a train never turns this fast
     if (len(w) > o.moveRate && !this.movedAlert) {
       this.movedAlert = true;
@@ -294,7 +303,7 @@ export class Tracker {
     for (const s of seg.samples) {
       const dt = clamp(s.t - lt, 0, 0.1); lt = s.t;
       const rr = s.r ? sub(s.r, seg.rBias) : [0, 0, 0];
-      this.stepLive(s, scale(GYRO_MAPS[this.gyroMap](rr), DEG), dt);
+      this.stepLive(s, this.mapGyro(rr), dt);
     }
   }
 
@@ -338,7 +347,7 @@ export class Tracker {
       const samples = end > 0 ? seg.samples.slice(0, end + 1) : seg.samples;
       result = integrateSegment(samples, {
         F: this.F, L: this.L, U: this.U0, gMag: this.gMag, rBias: seg.rBias,
-        map: GYRO_MAPS[this.gyroMap], p0: seg.p0, psi0: seg.psi0, theta0: seg.theta0, up0: seg.up0,
+        map: (r) => scale(GYRO_MAPS[this.gyroMap](r), this.gyroSign), p0: seg.p0, psi0: seg.psi0, theta0: seg.theta0, up0: seg.up0,
         thetaEnd, maxPitch: this.o.maxPitch, step: this.o.pointStep,
       });
     }
@@ -369,6 +378,7 @@ export class Tracker {
   }
 
   chooseGyroMap() {
+    if (this.gyroFixed) return; // measured by the sensor check
     const ratio = (e) => (e[1] > 1e-6 ? e[0] / e[1] : 0);
     const enough = this.mapEnergy.spec[1] > 0.002; // need some real turning
     if (!enough) return;
@@ -404,7 +414,7 @@ export class Tracker {
       const arrived = this.isBraking(seg);
       const result = integrateSegment(seg.samples, {
         F: this.F, L: this.L, U: this.U0, gMag: this.gMag, rBias: seg.rBias,
-        map: GYRO_MAPS[this.gyroMap], p0: seg.p0, psi0: seg.psi0, theta0: seg.theta0, up0: seg.up0,
+        map: (r) => scale(GYRO_MAPS[this.gyroMap](r), this.gyroSign), p0: seg.p0, psi0: seg.psi0, theta0: seg.theta0, up0: seg.up0,
         thetaEnd: null, fixedBias: arrived ? undefined : this.biasPrior,
         maxPitch: this.o.maxPitch, step: this.o.pointStep,
       });
@@ -568,7 +578,7 @@ export function integrateSegment(samples, c) {
 export function createFeeder(rec, opts) {
   const samples = rec.samples.map(unpackSample);
   const platform = rec.platform || (rec.userAgent ? detectPlatform(rec.userAgent) : 'spec');
-  const tr = new Tracker({ profile: rec.profile, platform, ...opts });
+  const tr = new Tracker({ profile: rec.profile, platform, sensorCheck: rec.sensorCheck, ...opts });
   const calN = Math.min(Math.max(rec.calibrationCount || 0, 30), samples.length);
   tr.calibrate(samples.slice(0, calN));
   const recals = (rec.marks || []).filter((m) => m.type === 'recal').sort((a, b) => a.from - b.from);

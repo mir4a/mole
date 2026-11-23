@@ -146,6 +146,9 @@
     .profile { display: grid; gap: 4px; }
     .profile svg { width: 100%; height: auto; display: block; }
     .profile-cap { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+    .check-box { display: flex; gap: 14px; align-items: center; margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
+    .check-pic { width: 110px; flex: none; }
+    .check-say { margin: 0; color: var(--fg) !important; font-weight: 600; }
     .done-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
     .done-head button { min-height: 36px; padding: 6px 12px; font-size: 13px; }
   </style>
@@ -187,6 +190,21 @@
            data-tram="The page needs the accelerometer and the gyroscope. On iPhone the browser will ask for permission. Location is asked for when you tap Start.">The page needs the accelerometer and the gyroscope. On iPhone the browser will ask for permission.</p>
         <div class="row"><button id="btn-sensors" class="primary">Turn on sensors</button></div>
         <div class="status" id="sensor-status"></div>
+      </li>
+
+      <li id="st-check">
+        <h2>Check the sensor axes</h2>
+        <p>Once per phone. Phones report motion with different sign conventions; this 10-second check finds yours, so turns and slopes are never drawn mirrored.</p>
+        <div class="check-box" id="check-box" hidden>
+          <svg class="check-pic" viewBox="0 0 120 70" aria-hidden="true">
+            <rect id="pic-upright" x="18" y="8" width="26" height="48" rx="5" fill="var(--amber)"/>
+            <path d="M54 32 h16 M64 26 l7 6 -7 6" stroke="var(--muted)" stroke-width="3" fill="none" stroke-linecap="round"/>
+            <rect id="pic-flat" x="78" y="46" width="34" height="8" rx="3" fill="var(--line)"/>
+          </svg>
+          <p class="check-say" id="check-say"></p>
+        </div>
+        <div class="row"><button id="btn-check" disabled>Check sensors</button></div>
+        <div class="status" id="check-status"></div>
       </li>
 
       <li id="st-mount">

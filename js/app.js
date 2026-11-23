@@ -3,6 +3,7 @@ import { requestMotionPermission, startMotion, keepAwake, motionSupported, start
 import { TunnelScene } from './scene.js';
 import { simulateRide, BUS_OPTS, TRAM_OPTS } from './sim.js';
 import { gpsReference, gpsDistance, gpsSpeed } from './gps.js';
+import { analyzeSensorCheck, poseOf } from './sensorcheck.js';
 import * as store from './store.js';
 
 const $ = (id) => document.getElementById(id);
@@ -111,6 +112,7 @@ function checkSensors(permission) {
   $('st-sensors').classList.add('done');
   $('btn-sensors').hidden = true;
   ui.start.disabled = false;
+  $('btn-check').disabled = !s.hasGyro;
 }
 
 function setStatus(el, text, cls = '') { el.textContent = text; el.className = 'status ' + cls; }
@@ -121,6 +123,7 @@ function onSample({ tMs, a, r }) {
   meterWin.push({ t: tMs / 1000, a, r });
   while (meterWin.length && tMs / 1000 - meterWin[0].t > 1) meterWin.shift();
 
+  if (check) checkStep({ t: tMs / 1000, a, r });
   if (mode === 'calibrating') return calibrateStep(tMs, a, r);
   if (mode !== 'live') return;
 
@@ -148,6 +151,79 @@ function updateMeter() {
   ui.meterLabel.textContent = label;
   ui.meterValue.textContent = `vibration ${nf2.format(st)} m/s²`;
   if (still) $('st-mount').classList.add('done');
+}
+
+// ---------------- sensor check (once per phone) ----------------
+let check = null;           // { stage, buf, moved, started }
+let savedCheck = null;      // result kept in this browser
+try {
+  const c = JSON.parse(localStorage.getItem('mole.sensorCheck') || 'null');
+  if (c?.ok && c.ua === navigator.userAgent) savedCheck = c;
+} catch {}
+if (savedCheck) {
+  setStatus($('check-status'), savedCheck.message, 'ok');
+  $('st-check').classList.add('done');
+  $('btn-check').textContent = 'Check again';
+}
+
+const CHECK_SAY = {
+  upright: 'Hold the phone upright in front of you, screen facing you, and keep it still.',
+  tilt: 'Now slowly lay it flat on your palm, screen up, and hold it still.',
+};
+
+$('btn-check').addEventListener('click', () => {
+  check = { stage: 'upright', buf: [], moved: false, started: performance.now() / 1000 };
+  $('check-box').hidden = false;
+  $('check-say').textContent = CHECK_SAY.upright;
+  $('pic-upright').setAttribute('fill', 'var(--amber)');
+  $('pic-flat').setAttribute('fill', 'var(--line)');
+  setStatus($('check-status'), '');
+  $('btn-check').disabled = true;
+});
+
+/** The last `sec` of the buffer is still, and its gravity matches `pose`. */
+function stillIn(buf, sec, pose) {
+  const tEnd = buf.at(-1).t;
+  const w = buf.filter((x) => x.t >= tEnd - sec);
+  if (w.length < sec * 30 || tEnd - buf[0].t < sec) return false;
+  if (w.some((x) => !x.r || Math.hypot(...x.r) > 8)) return false;
+  if (stillStats(w).stdA > 0.25) return false;
+  return poseOf(stillStats(w).meanA)?.pose === pose;
+}
+
+function checkStep(sample) {
+  const c = check;
+  c.buf.push(sample);
+  if (sample.t - c.started > 25) return endCheck(null, "Didn't see the full move. Tap Check again and follow the two steps.");
+  if (c.stage === 'upright') {
+    c.buf = c.buf.filter((x) => x.t >= sample.t - 0.8);
+    if (stillIn(c.buf, 0.6, 'upright')) {
+      c.stage = 'tilt';
+      c.buf = c.buf.filter((x) => x.t >= sample.t - 0.6);
+      $('check-say').textContent = CHECK_SAY.tilt;
+      $('pic-upright').setAttribute('fill', 'var(--line)');
+      $('pic-flat').setAttribute('fill', 'var(--amber)');
+    }
+    return;
+  }
+  if (sample.r && Math.hypot(...sample.r) > 25) c.moved = true;
+  if (c.moved && stillIn(c.buf, 0.6, 'flat')) {
+    const res = analyzeSensorCheck(c.buf, 0.5);
+    endCheck(res.ok ? res : null, res.message);
+  }
+}
+
+function endCheck(res, message) {
+  check = null;
+  $('check-box').hidden = true;
+  $('btn-check').disabled = false;
+  if (!res) { setStatus($('check-status'), message, 'bad'); return; }
+  const { results, ...keep } = res;
+  savedCheck = { ...keep, ua: navigator.userAgent, at: new Date().toISOString() };
+  try { localStorage.setItem('mole.sensorCheck', JSON.stringify(savedCheck)); } catch {}
+  setStatus($('check-status'), message, 'ok');
+  $('st-check').classList.add('done');
+  $('btn-check').textContent = 'Check again';
 }
 
 // ---------------- step 4: calibration ----------------
@@ -181,14 +257,15 @@ function calibrateStep(tMs, a, r) {
   if (span < CALIB_SEC) return;
 
   // calibrated: start the live ride
-  tracker = new Tracker({ profile: vehicle, platform: PLATFORM });
+  tracker = new Tracker({ profile: vehicle, platform: PLATFORM, sensorCheck: savedCheck });
   const rows = calibBuf.map((x) => packSample(x.tMs, x.a, x.r));
   calibT = rows.at(-1)[0] / 1000;
   tracker.calibrate(rows.map(unpackSample));
   rec = {
     rows, marks: [], gps: gpsFixes,
     meta: {
-      id: Date.now(), version: 1, kind: 'live', profile: vehicle, platform: PLATFORM, startedAt: new Date().toISOString(),
+      id: Date.now(), version: 1, kind: 'live', profile: vehicle, platform: PLATFORM, sensorCheck: savedCheck || undefined,
+      startedAt: new Date().toISOString(),
       userAgent: navigator.userAgent, hz: motion.stats.hz, calibrationCount: rows.length,
     },
   };

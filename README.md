@@ -19,9 +19,14 @@ the tracker (`js/tracker.js`) leans on what a heavy rail vehicle gives for free:
   The full rotation matters: in canted curves part of the turn shows up on the
   phone's pitch axis. Gravity measured at every stop pins the pitch there, and
   the elevation profile (relative to the start) is drawn in the summary.
-- **iPhone Safari** reports the accelerometer with the opposite sign to the
-  spec; the page detects iOS and flips it (found by checking real rides
-  against the metro line map).
+- **Sensor conventions differ between phones.** iPhone Safari reports the
+  accelerometer with the opposite sign to the spec and the gyro axes in another
+  order (found by checking real rides against the metro line map). A one-time
+  sensor check on the setup screen measures them: the phone held upright,
+  screen facing you (the spec says y = +9.8), then laid flat screen up. The
+  known pose gives the accelerometer sign; propagating gravity through the turn
+  with each gyro hypothesis gives the axis order and sign. Without the check
+  the page falls back to guessing from the user agent.
 - **Gyro axis order is detected automatically.** Browsers have disagreed on how
   `rotationRate.alpha/beta/gamma` map to device axes.
 
@@ -72,6 +77,7 @@ replayed through the algorithm with *Open recording*.
 - `js/sim.js`: synthetic metro ride generator (demo and tests)
 - `js/scene.js`: three.js view (tunnel tubes, platforms, follow and orbit cameras)
 - `js/sensors.js`: DeviceMotion, iOS permission, screen wake lock
+- `js/sensorcheck.js`: one-time sensor check (accelerometer sign, gyro axes)
 - `js/gps.js`: GPS reference track for bus mode (local metres, alignment, distances)
 - `js/store.js`: IndexedDB storage of rides
 - `js/app.js`: UI flow (setup and calibration, ride, summary, replay)

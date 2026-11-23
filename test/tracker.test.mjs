@@ -1,6 +1,7 @@
 // node test/tracker.test.mjs — runs synthetic rides through the tracker and
 // compares stop-to-stop distances and stop positions with ground truth.
-import { simulateRide, BUS_OPTS, TRAM_OPTS } from '../js/sim.js';
+import { simulateRide, BUS_OPTS, TRAM_OPTS, simulateSensorCheck } from '../js/sim.js';
+import { analyzeSensorCheck } from '../js/sensorcheck.js';
 import { replayRecording } from '../js/tracker.js';
 import { gpsReference, gpsDistance } from '../js/gps.js';
 
@@ -64,6 +65,27 @@ for (const c of cases) {
   const endGap = Math.hypot(lastStop[0] - lastGps[0], lastStop[1] - lastGps[1]);
   const ok = ref.aligned && worst < 0.1;
   console.log(`\n# bus GPS reference: aligned=${ref.aligned}, GPS segment lengths within ${(worst * 100).toFixed(1)}% of truth, sensor/GPS end gap ${endGap.toFixed(0)} m → ${ok ? 'OK' : 'FAIL'}`);
+  if (!ok) failed++;
+}
+// Sensor check: must recover each convention from one upright -> flat turn.
+for (const [platform, gyroReversed, want] of [
+  ['spec', false, { accSign: 1, gyroMap: 'spec', gyroSign: 1 }],
+  ['webkit', false, { accSign: -1, gyroMap: 'webkit', gyroSign: 1 }],
+  ['spec', true, { accSign: 1, gyroMap: 'spec', gyroSign: -1 }],
+]) {
+  const res = analyzeSensorCheck(simulateSensorCheck({ platform, gyroReversed, seed: 3 }));
+  const ok = res.ok && res.accSign === want.accSign && res.gyroMap === want.gyroMap && res.gyroSign === want.gyroSign;
+  console.log(`\n# sensor check ${platform}${gyroReversed ? ' (reversed gyro)' : ''}: ${res.message} error ${res.error?.toFixed(1)}°, margin ${res.margin?.toFixed(0)}° → ${ok ? 'OK' : 'FAIL'}`);
+  if (!ok) failed++;
+}
+// A check with a flipped gyro must also fix a whole ride.
+{
+  const { recording } = simulateRide({ seed: 8 });
+  const flipped = { ...recording, samples: recording.samples.map((x) => [x[0], x[1], x[2], x[3], -x[4], -x[5], -x[6]]) };
+  const plain = replayRecording(flipped), checked = replayRecording({ ...flipped, sensorCheck: { ok: true, accSign: 1, gyroMap: 'spec', gyroSign: -1 } }), ref = replayRecording(recording);
+  const endGap = (tr) => Math.hypot(tr.stops.at(-1).p[0] - ref.stops.at(-1).p[0], tr.stops.at(-1).p[1] - ref.stops.at(-1).p[1]);
+  const ok = endGap(checked) < 5 && endGap(plain) > 200;
+  console.log(`\n# reversed gyro ride: end ${endGap(plain).toFixed(0)} m off without the check, ${endGap(checked).toFixed(0)} m with it → ${ok ? 'OK' : 'FAIL'}`);
   if (!ok) failed++;
 }
 process.exit(failed ? 1 : 0);
