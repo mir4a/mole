@@ -29,6 +29,18 @@ function rotMatrix(yaw, pitch, roll) {
   ];
 }
 const mulT = (M, v) => [0, 1, 2].map((j) => M[0][j] * v[0] + M[1][j] * v[1] + M[2][j] * v[2]);
+const mul = (M, v) => [0, 1, 2].map((i) => M[i][0] * v[0] + M[i][1] * v[1] + M[i][2] * v[2]);
+const matT = (A) => [0, 1, 2].map((i) => [0, 1, 2].map((j) => A[j][i]));
+const matMul = (A, B) => [0, 1, 2].map((i) => [0, 1, 2].map((j) => A[i][0] * B[0][j] + A[i][1] * B[1][j] + A[i][2] * B[2][j]));
+
+/** Car -> world rotation for heading psi, pitch theta (nose up +) and roll phi (left side up +). */
+function carToWorld(psi, theta, phi) {
+  const [cz, sz, cy, sy, cx, sx] = [Math.cos(psi), Math.sin(psi), Math.cos(-theta), Math.sin(-theta), Math.cos(phi), Math.sin(phi)];
+  const Rz = [[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]];
+  const Ry = [[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]];
+  const Rx = [[1, 0, 0], [0, cx, -sx], [0, sx, cx]];
+  return matMul(Rz, matMul(Ry, Rx));
+}
 
 // A city bus: short hops, right-angle turns at junctions, steeper grades.
 export const BUS_ROUTE = [
@@ -79,6 +91,7 @@ export function simulateRide(o = {}) {
   const samples = [];
   const truth = [[0, 0, 0]];
   const stopsTruth = [[0, 0, 0]];
+  const truthAtt = []; // [t, pitch, heading] while moving
   const trackLengths = [];
   let t = 0, x = 0, y = 0, z = 0, psi = 0;
 
@@ -121,10 +134,23 @@ export function simulateRide(o = {}) {
       for (const c of seg.curves) if (s >= c.at && s < c.at + c.len) return (c.angle * DEG) / c.len;
       return 0;
     };
+    // cant (superelevation): the car leans into curves, ramping in over ~25 m
+    const cantMax = (o.cantMax ?? 5) * DEG;
+    // curvature averaged over a 50 m window, computed exactly so it ramps smoothly
+    const cantAt = (s) => {
+      let k = 0;
+      for (const c of seg.curves) {
+        const overlap = Math.max(0, Math.min(s + 25, c.at + c.len) - Math.max(s - 25, c.at));
+        k += ((c.angle * DEG) / c.len) * overlap / 50;
+      }
+      return -Math.sign(k) * Math.min(cantMax, Math.atan((vmax * vmax * Math.abs(k)) / g));
+    };
     // grade profile: dips/humps between stations, level at both platforms
     const gr = (seg.grade || 0) / 100;
     const thetaAt = (s) => Math.atan(gr * Math.sin(Math.PI * s / L) ** 2 * 1.0);
-    const dThetaDs = (s) => (gr * 2 * Math.sin(Math.PI * s / L) * Math.cos(Math.PI * s / L) * Math.PI / L) / (1 + (gr * Math.sin(Math.PI * s / L) ** 2) ** 2);
+    // Kinematically consistent motion: the car's attitude is a rotation
+    // matrix, and the gyro and accelerometer readings are derived from it.
+    let Rprev = carToWorld(psi, 0, 0), vwPrev = [0, 0, 0];
     while (s < L) {
       const remain = L - s;
       let a;
@@ -144,15 +170,23 @@ export function simulateRide(o = {}) {
       if (v === 0 && remain < 2) break;
       const ds = v * dt;
       s += ds;
-      const th = thetaAt(s), k = kappa(s);
-      const yawRate = v * k, pitchRate = v * dThetaDs(s);
-      psi += yawRate * dt;
+      const th = thetaAt(s), k = kappa(s), phi = cantAt(s);
+      psi += v * k * dt;              // heading of the track (about the world vertical)
       x += Math.cos(psi) * Math.cos(th) * ds;
       y += Math.sin(psi) * Math.cos(th) * ds;
       z += Math.sin(th) * ds;
       truth.push([x, y, z]);
+      truthAtt.push([t, th, psi]);
       if (o.gps && t - lastGps >= 1) { lastGps = t; gpsFix(); }
-      emit([a + g * Math.sin(th), v * yawRate, g * Math.cos(th)], [0, -pitchRate, yawRate], true);
+      const R = carToWorld(psi, th, phi);
+      const fwd = [R[0][0], R[1][0], R[2][0]];
+      const vw = fwd.map((c) => c * v);
+      const aw = vw.map((c, i) => (c - vwPrev[i]) / dt);
+      const fCar = mul(matT(R), [aw[0], aw[1], aw[2] + g]);
+      const dR = matMul(matT(Rprev), R);
+      const wCar = [(dR[2][1] - dR[1][2]) / (2 * dt), (dR[0][2] - dR[2][0]) / (2 * dt), (dR[1][0] - dR[0][1]) / (2 * dt)];
+      Rprev = R; vwPrev = vw;
+      emit(fCar, wCar, true);
     }
     stopsTruth.push([x, y, z]);
     trackLengths.push(s);
@@ -160,9 +194,10 @@ export function simulateRide(o = {}) {
   }
   return {
     recording: {
-      version: 1, kind: 'synthetic', profile: o.profile || 'metro', hz, calibrationCount, samples,
+      version: 1, kind: 'synthetic', profile: o.profile || 'metro', platform: gyroMap === 'webkit' ? 'webkit' : 'spec',
+      hz, calibrationCount, samples,
       gps: o.gps ? gps : undefined, startedAt: new Date().toISOString(),
     },
-    truth, stopsTruth, trackLengths,
+    truth, stopsTruth, trackLengths, truthAtt,
   };
 }

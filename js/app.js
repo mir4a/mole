@@ -1,4 +1,4 @@
-import { Tracker, createFeeder, packSample, unpackSample, stillStats } from './tracker.js';
+import { Tracker, createFeeder, packSample, unpackSample, stillStats, detectPlatform } from './tracker.js';
 import { requestMotionPermission, startMotion, keepAwake, motionSupported, startGeo } from './sensors.js';
 import { TunnelScene } from './scene.js';
 import { simulateRide, BUS_OPTS, TRAM_OPTS } from './sim.js';
@@ -7,6 +7,8 @@ import * as store from './store.js';
 
 const $ = (id) => document.getElementById(id);
 const CALIB_SEC = 3, RECAL_SEC = 2.5, DEMO_SPEED = 25;
+// iPhone Safari flips the accelerometer's sign (see tracker.js)
+const PLATFORM = detectPlatform(navigator.userAgent, navigator.maxTouchPoints > 1);
 
 const ui = {
   setup: $('setup'), ride: $('ride'),
@@ -179,14 +181,14 @@ function calibrateStep(tMs, a, r) {
   if (span < CALIB_SEC) return;
 
   // calibrated: start the live ride
-  tracker = new Tracker({ profile: vehicle });
+  tracker = new Tracker({ profile: vehicle, platform: PLATFORM });
   const rows = calibBuf.map((x) => packSample(x.tMs, x.a, x.r));
   calibT = rows.at(-1)[0] / 1000;
   tracker.calibrate(rows.map(unpackSample));
   rec = {
     rows, marks: [], gps: gpsFixes,
     meta: {
-      id: Date.now(), version: 1, kind: 'live', profile: vehicle, startedAt: new Date().toISOString(),
+      id: Date.now(), version: 1, kind: 'live', profile: vehicle, platform: PLATFORM, startedAt: new Date().toISOString(),
       userAgent: navigator.userAgent, hz: motion.stats.hz, calibrationCount: rows.length,
     },
   };
@@ -328,11 +330,39 @@ function showSummary() {
     ? `<tr><th>Segment</th><th>Length</th>${gps ? '<th>GPS</th><th>Error</th>' : ''}<th>Time</th><th>Top speed</th></tr>` +
       segs.map((s, i) => row(s.open ? `${i} → no stop` : `${i} → ${i + 1}`, s)).join('')
     : '';
+  $('done-profile').innerHTML = elevationProfile(tr);
   $('share-note').textContent = rec
     ? 'The recording keeps the raw sensor data: you can open it here again or send it over to tune the algorithm.'
     : '';
   $('btn-share').hidden = !rec;
   ui.done.hidden = false;
+}
+
+/**
+ * Elevation along the ride (relative to the start, from the gyro attitude
+ * anchored to gravity at every stop) as a small SVG chart with the stops marked.
+ */
+function elevationProfile(tr) {
+  const P = tr.path;
+  if (P.length < 3) return '';
+  const xs = [0];
+  for (let i = 1; i < P.length; i++) xs.push(xs[i - 1] + Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1], P[i][2] - P[i - 1][2]));
+  const zs = P.map((p) => p[2]);
+  const zMin = Math.min(...zs), zMax = Math.max(...zs), span = Math.max(zMax - zMin, 5);
+  const W = 600, H = 150, padL = 44, padR = 8, padT = 10, padB = 18;
+  const X = (d) => padL + (d / xs.at(-1)) * (W - padL - padR);
+  const Y = (z) => padT + ((zMax + span * 0.05 - z) / (span * 1.1)) * (H - padT - padB);
+  const line = P.map((p, i) => `${X(xs[i]).toFixed(1)},${Y(p[2]).toFixed(1)}`).join(' ');
+  const stopDots = tr.stops.map((st) => {
+    const i = P.findIndex((p) => Math.hypot(p[0] - st.p[0], p[1] - st.p[1], p[2] - st.p[2]) < 0.01);
+    return i < 0 ? '' : `<circle cx="${X(xs[i]).toFixed(1)}" cy="${Y(P[i][2]).toFixed(1)}" r="4" fill="var(--go)"/>`;
+  }).join('');
+  const ticks = [zMax, (zMax + zMin) / 2, zMin].map((z) =>
+    `<line x1="${padL}" x2="${W - padR}" y1="${Y(z).toFixed(1)}" y2="${Y(z).toFixed(1)}" stroke="var(--line)"/>` +
+    `<text x="${padL - 6}" y="${(Y(z) + 4).toFixed(1)}" text-anchor="end" font-size="11" fill="var(--muted)">${Math.round(z)} m</text>`).join('');
+  return `<div class="profile"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Elevation profile, from ${Math.round(zMax)} to ${Math.round(zMin)} metres relative to the start">${ticks}` +
+    `<polyline points="${line}" fill="none" stroke="var(--amber)" stroke-width="2.5" stroke-linejoin="round"/>${stopDots}</svg>` +
+    `<div class="profile-cap"><span>Elevation relative to the start · green dots are stops</span><span>${fmtDist(xs.at(-1))}</span></div></div>`;
 }
 
 $('btn-share').addEventListener('click', () => exportRecording(buildRecording()));

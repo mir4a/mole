@@ -14,8 +14,14 @@ the tracker (`js/tracker.js`) leans on what a heavy rail vehicle gives for free:
 - **Stops are zero-velocity updates.** At every stop the speed is exactly 0, so the
   accelerometer bias for the segment is solved for and the whole segment is
   re-integrated. Pitch drift is corrected against gravity measured at the stop.
-- **Heading comes from the gyroscope** (yaw rate about the vertical), not the
-  magnetometer, which is useless next to traction motors.
+- **Heading and grade come from the gyroscope**, integrated as a full 3D
+  attitude (not the magnetometer, which is useless next to traction motors).
+  The full rotation matters: in canted curves part of the turn shows up on the
+  phone's pitch axis. Gravity measured at every stop pins the pitch there, and
+  the elevation profile (relative to the start) is drawn in the summary.
+- **iPhone Safari** reports the accelerometer with the opposite sign to the
+  spec; the page detects iOS and flips it (found by checking real rides
+  against the metro line map).
 - **Gyro axis order is detected automatically.** Browsers have disagreed on how
   `rotationRate.alpha/beta/gamma` map to device axes.
 

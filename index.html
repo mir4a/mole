@@ -143,6 +143,9 @@
     .seg button { border: 0; background: transparent; border-radius: 9px; font-weight: 600; color: var(--muted); }
     .seg button[aria-checked="true"] { background: var(--amber); color: var(--amber-ink); }
     .gps-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #5aa9ff; margin-right: 4px; vertical-align: middle; }
+    .profile { display: grid; gap: 4px; }
+    .profile svg { width: 100%; height: auto; display: block; }
+    .profile-cap { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
     .done-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
     .done-head button { min-height: 36px; padding: 6px 12px; font-size: 13px; }
   </style>
@@ -283,6 +286,7 @@
     <div class="card done-sheet" id="done" hidden>
       <div class="done-head"><h2>Ride finished</h2><button id="btn-hide-summary">Hide</button></div>
       <div id="done-summary"></div>
+      <div id="done-profile"></div>
       <div class="tbl-wrap"><table id="done-table"></table></div>
       <div class="row">
         <button id="btn-share" class="primary">Save recording</button>

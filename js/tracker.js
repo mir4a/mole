@@ -30,15 +30,22 @@ const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 // over the years. Both candidates are tried; the one whose rotation lines up
 // with the vertical while the train turns wins.
 //
-// 'webkit' (iPhone Safari) reports alpha=x, beta=y, gamma=z, and its motion
-// data also has the opposite handedness: accelerometer and gyroscope disagree
-// in sign. Inside the data that is undetectable (a mirrored ride is just as
-// physical), but two Prague metro rides checked against the real line map
-// came out mirrored turn for turn, so the gyro is negated here.
+// 'webkit' (iPhone Safari) reports alpha=x, beta=y, gamma=z.
 export const GYRO_MAPS = {
   spec: (r) => [r[1], r[2], r[0]],
-  webkit: (r) => [-r[0], -r[1], -r[2]],
+  webkit: (r) => [r[0], r[1], r[2]],
 };
+
+/**
+ * iPhone Safari reports accelerationIncludingGravity with the opposite sign to
+ * the spec (an upright phone reads y = -9.8). Found on real Prague metro rides:
+ * the routes came out mirrored against the line map, and propagating gravity
+ * with the gyro between stations only matches the measured tilt with the gyro
+ * as reported, so the accelerometer is the one to flip.
+ */
+export function detectPlatform(userAgent = '', touch = false) {
+  return /iPhone|iPad|iPod/.test(userAgent) || (/Macintosh/.test(userAgent) && touch) ? 'webkit' : 'spec';
+}
 
 const DEFAULTS = {
   winSec: 1.0,        // vibration window
@@ -88,6 +95,9 @@ export class Tracker {
   constructor(opts = {}) {
     this.profile = PROFILES[opts.profile] ? opts.profile : 'metro';
     this.o = { ...DEFAULTS, ...PROFILES[this.profile], ...opts };
+    this.platform = opts.platform === 'webkit' ? 'webkit' : 'spec';
+    this.accSign = this.platform === 'webkit' ? -1 : 1;
+    this.gyroMap = this.platform;
     this.calibrated = false;
     this.events = [];
   }
@@ -96,6 +106,7 @@ export class Tracker {
 
   /** Initial calibration from a few seconds of samples with the train standing still. */
   calibrate(samples) {
+    samples = samples.map((x) => this.norm(x));
     const st = stillStats(samples);
     this.gMag = len(st.meanA);
     this.U0 = normalize(st.meanA);          // "up" in device coordinates
@@ -121,6 +132,7 @@ export class Tracker {
     }
     this.theta = 0;
     this.thetaStation = 0;
+    this.upStation = this.U0.slice();      // gravity direction at the current stop
     this.v = 0;
     this.state = 'stopped';
     this.win = [];
@@ -142,8 +154,14 @@ export class Tracker {
 
   // ---------- streaming ----------
 
+  /** Brings a raw sample to the spec's sign conventions. */
+  norm(s) {
+    return this.accSign === 1 ? s : { t: s.t, a: [-s.a[0], -s.a[1], -s.a[2]], r: s.r };
+  }
+
   push(s) {
     if (!this.calibrated) return;
+    s = this.norm(s);
     const o = this.o;
     const dt = this.lastT == null ? 0 : clamp(s.t - this.lastT, 0, 0.1);
     this.lastT = s.t;
@@ -249,10 +267,12 @@ export class Tracker {
   // ---------- live (provisional) integration ----------
 
   stepLive(s, w, dt) {
-    const r = dot(w, this.U0);
-    this.psi += r * dt;
-    // pitch stays at the departure station's value while moving: on a real ride
-    // the phone gyro showed ~0.15°/s of false pitch rate under vibration
+    // full 3D attitude: in canted curves part of the turn shows up on the
+    // phone's pitch axis, so rates can't simply be projected on fixed axes
+    this.Rlive = rotateBody(this.Rlive, w, dt);
+    const att = attitude(this.Rlive, this.F, this.psi);
+    this.psi = att.psi;
+    this.theta = clamp(att.theta, -this.o.maxPitch, this.o.maxPitch);
     // live view only: subtract the accelerometer bias learned on earlier segments
     const aF = dot(s.a, this.F) - this.gMag * Math.sin(this.theta) - this.biasPrior;
     this.v += aF * dt;
@@ -268,6 +288,7 @@ export class Tracker {
   replayLive() {
     const seg = this.seg;
     this.pos = seg.p0.slice(); this.psi = seg.psi0; this.theta = seg.theta0; this.v = 0;
+    this.Rlive = stationFrame(seg.up0, this.F, seg.psi0);
     this.live = [this.pos.slice()]; seg.liveDist = 0;
     let lt = seg.samples[0]?.t;
     for (const s of seg.samples) {
@@ -285,7 +306,7 @@ export class Tracker {
     this.seg = {
       t0: pre[0]?.t ?? t,
       samples: pre.slice(),
-      p0: this.pos.slice(), psi0: this.psi, theta0: this.thetaStation,
+      p0: this.pos.slice(), psi0: this.psi, theta0: this.thetaStation, up0: this.upStation.slice(),
       rBias: this.rBias.slice(), liveDist: 0,
     };
     this.theta = this.thetaStation;
@@ -303,6 +324,7 @@ export class Tracker {
     const quietSamples = this.win.filter((x) => x.t >= tStop);
     const mA = stillStats(quietSamples.length ? quietSamples : this.win).meanA;
     this.g0 = mA.slice();
+    this.upStation = normalize(mA);
     if (!this.F && this.fStats.time > 0.3) this.lockF();
     const thetaEnd = this.F ? clamp(Math.asin(clamp(dot(normalize(mA), this.F), -1, 1)), -this.o.maxPitch, this.o.maxPitch) : 0;
 
@@ -316,7 +338,7 @@ export class Tracker {
       const samples = end > 0 ? seg.samples.slice(0, end + 1) : seg.samples;
       result = integrateSegment(samples, {
         F: this.F, L: this.L, U: this.U0, gMag: this.gMag, rBias: seg.rBias,
-        map: GYRO_MAPS[this.gyroMap], p0: seg.p0, psi0: seg.psi0, theta0: seg.theta0,
+        map: GYRO_MAPS[this.gyroMap], p0: seg.p0, psi0: seg.psi0, theta0: seg.theta0, up0: seg.up0,
         thetaEnd, maxPitch: this.o.maxPitch, step: this.o.pointStep,
       });
     }
@@ -330,6 +352,7 @@ export class Tracker {
     if (!result || seg.handled || result.dist < this.o.minSegDist || result.vmax < 1) {
       // false departure: roll back to the stop position
       this.pos = seg.p0.slice(); this.psi = seg.psi0; this.theta = this.thetaStation;
+      this.upStation = seg.up0;
       this.events.push({ type: 'cancel', t: tStop });
       return;
     }
@@ -381,7 +404,7 @@ export class Tracker {
       const arrived = this.isBraking(seg);
       const result = integrateSegment(seg.samples, {
         F: this.F, L: this.L, U: this.U0, gMag: this.gMag, rBias: seg.rBias,
-        map: GYRO_MAPS[this.gyroMap], p0: seg.p0, psi0: seg.psi0, theta0: seg.theta0,
+        map: GYRO_MAPS[this.gyroMap], p0: seg.p0, psi0: seg.psi0, theta0: seg.theta0, up0: seg.up0,
         thetaEnd: null, fixedBias: arrived ? undefined : this.biasPrior,
         maxPitch: this.o.maxPitch, step: this.o.pointStep,
       });
@@ -402,14 +425,17 @@ export class Tracker {
     return out;
   }
 
-  /** Mean forward acceleration over the last 3 s is clearly negative. */
+  /** The train was clearly braking within the last 5 s (any 1 s window below -0.35 m/s²). */
   isBraking(seg) {
     const tEnd = seg.samples.at(-1).t;
-    const tail = seg.samples.filter((x) => x.t >= tEnd - 3);
-    if (tail.length < 10) return false;
     const g = this.gMag * Math.sin(seg.theta0);
-    const a = tail.reduce((sum, x) => sum + dot(x.a, this.F) - g, 0) / tail.length - this.biasPrior;
-    return a < -0.25;
+    for (let w = 0; w < 5; w += 0.5) {
+      const win = seg.samples.filter((x) => x.t <= tEnd - w && x.t > tEnd - w - 1);
+      if (win.length < 10) continue;
+      const a = win.reduce((sum, x) => sum + dot(x.a, this.F) - g, 0) / win.length - this.biasPrior;
+      if (a < -0.35) return true;
+    }
+    return false;
   }
 
   /** Current speed for display (m/s), never negative. */
@@ -417,6 +443,40 @@ export class Tracker {
 }
 
 // ---------- pure helpers ----------
+
+/**
+ * Device -> world rotation (rows are the world axes in device coordinates):
+ * z = measured up, and the car's forward axis F has heading psi.
+ */
+export function stationFrame(up, F, psi) {
+  const z = normalize(up);
+  const fh = normalize(sub(F, scale(z, dot(F, z))));
+  const lh = cross(z, fh);
+  const c = Math.cos(psi), s = Math.sin(psi);
+  const x = sub(scale(fh, c), scale(lh, s));
+  const y = add(scale(fh, s), scale(lh, c));
+  return [x, y, z];
+}
+
+/** Advances a device -> world rotation by body rates w (rad/s) over dt (Rodrigues). */
+export function rotateBody(R, w, dt) {
+  const th = len(w) * dt;
+  if (th < 1e-12) return R;
+  const k = scale(w, 1 / len(w)), c = Math.cos(th), sn = Math.sin(th);
+  // R_new = R * Exp(k th): each row r -> r rotated by -th about k
+  return R.map((r) => {
+    const kd = dot(k, r), kx = cross(k, r);
+    return [0, 1, 2].map((i) => r[i] * c - kx[i] * sn + k[i] * kd * (1 - c));
+  });
+}
+
+/** Heading (unwrapped near prevPsi) and pitch of the car's forward axis. */
+export function attitude(R, F, prevPsi = 0) {
+  const fw = [dot(R[0], F), dot(R[1], F), dot(R[2], F)];
+  let psi = Math.atan2(fw[1], fw[0]);
+  psi += 2 * Math.PI * Math.round((prevPsi - psi) / (2 * Math.PI));
+  return { psi, theta: Math.asin(clamp(fw[2] / (len(fw) || 1), -1, 1)) };
+}
 
 function newFStats() { return { sxx: 0, sxy: 0, syy: 0, sx: 0, sy: 0, time: 0 }; }
 
@@ -459,28 +519,29 @@ export function integrateSegment(samples, c) {
   const n = samples.length;
   const t0 = samples[0].t, T = Math.max(samples[n - 1].t - t0, 1e-3);
   const psi = new Float64Array(n), th = new Float64Array(n), dts = new Float64Array(n);
-  let p = c.psi0;
+  // Attitude of the phone in the world, from the gravity measured at the
+  // departure stop, the known forward axis and the heading so far.
+  let R = stationFrame(c.up0, c.F, c.psi0), p = c.psi0;
   for (let i = 0; i < n; i++) {
     const s = samples[i];
     const dt = i ? clamp(s.t - samples[i - 1].t, 0, 0.1) : 0;
     dts[i] = dt;
     const rr = s.r ? sub(s.r, c.rBias) : [0, 0, 0];
-    const w = scale(c.map(rr), DEG);
-    p += dot(w, c.U) * dt;
-    psi[i] = p;
+    R = rotateBody(R, scale(c.map(rr), DEG), dt);
+    const att = attitude(R, c.F, p);
+    p = att.psi;
+    psi[i] = p; th[i] = att.theta;
   }
-  // Grade: interpolated between the two stops, where it is measured from gravity.
-  // The gyro's pitch rate is not trusted (vibration makes it drift).
-  const thEnd = c.thetaEnd ?? c.theta0;
+  // The gyro's pitch drifts a little; the pitch measured from gravity at the
+  // arrival stop pins the end, and the difference is spread over the segment.
+  const dTh = c.thetaEnd == null ? 0 : c.thetaEnd - th[n - 1];
   let v = 0;
   const vr = new Float64Array(n);
   for (let i = 0; i < n; i++) {
-    th[i] = clamp(c.theta0 + (thEnd - c.theta0) * (samples[i].t - t0) / T, -c.maxPitch, c.maxPitch);
+    th[i] = clamp(th[i] + dTh * (samples[i].t - t0) / T, -c.maxPitch, c.maxPitch);
     v += (dot(samples[i].a, c.F) - c.gMag * Math.sin(th[i])) * dts[i];
     vr[i] = v;
   }
-  // m/s² — residual accelerometer bias along the track (ZUPT), or a given prior
-  // when the segment has no closing stop
   const bias = c.fixedBias ?? vr[n - 1] / T;
   let pos = c.p0.slice(), d = 0, vmax = 0;
   const points = [pos.slice()];
@@ -493,7 +554,10 @@ export function integrateSegment(samples, c) {
     if (dist(points.at(-1), pos) >= c.step) points.push(pos.slice());
   }
   if (dist(points.at(-1), pos) > 0.01) points.push(pos.slice());
-  return { points, dist: d, vmax, bias, psiEnd: psi[n - 1], dur: T };
+  // ~1 Hz attitude profile [t, pitch, heading] for diagnostics and charts
+  const profile = [];
+  for (let i = 0, next = t0; i < n; i++) if (samples[i].t >= next) { profile.push([samples[i].t, th[i], psi[i]]); next += 1; }
+  return { points, dist: d, vmax, bias, psiEnd: psi[n - 1], dur: T, profile };
 }
 
 /**
@@ -503,7 +567,8 @@ export function integrateSegment(samples, c) {
  */
 export function createFeeder(rec, opts) {
   const samples = rec.samples.map(unpackSample);
-  const tr = new Tracker({ profile: rec.profile, ...opts });
+  const platform = rec.platform || (rec.userAgent ? detectPlatform(rec.userAgent) : 'spec');
+  const tr = new Tracker({ profile: rec.profile, platform, ...opts });
   const calN = Math.min(Math.max(rec.calibrationCount || 0, 30), samples.length);
   tr.calibrate(samples.slice(0, calN));
   const recals = (rec.marks || []).filter((m) => m.type === 'recal').sort((a, b) => a.from - b.from);
