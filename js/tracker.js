@@ -335,7 +335,8 @@ export class Tracker {
     this.gDev = mA.slice();
     this.upStation = normalize(mA);
     if (!this.F && this.fStats.time > 0.3) this.lockF();
-    const thetaEnd = this.F ? clamp(Math.asin(clamp(dot(normalize(mA), this.F), -1, 1)), -this.o.maxPitch, this.o.maxPitch) : 0;
+    const lim = Math.min(this.o.maxPitch, this.o.stationPitch ?? Infinity);
+    const thetaEnd = this.F ? clamp(Math.asin(clamp(dot(normalize(mA), this.F), -1, 1)), -lim, lim) : 0;
 
     // refine the axis at every stop with all straight-line samples so far, keeping the sign
     if (this.F && this.fStats.time >= this.o.lockSec) this.lockF(this.F);

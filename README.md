@@ -88,6 +88,23 @@ one object per vehicle:
 Adding a vehicle is adding an object there; the vehicle switch, setup texts,
 ride view and demo pick it up.
 
+## Station data (Prague)
+
+`data/prague.json` lists lines A, B and C in order with coordinates (from
+Wikidata, CC0) and the depth of each platform below the terrain (middle of the
+platform), taken from the station pages of [metroweb.cz](https://metroweb.cz/metro/)
+(Tomáš Rejdal), Wikidata where missing. Depths are known for 55 of 61 line
+stations; the four newest stations of line A, Prosek and Střížkov are still
+missing. Transfer stations differ a lot between lines (Můstek A 29.3 m / B
+40.3 m, Muzeum A 34 m / C 10 m, Florenc B 39 m / C 9.35 m), which is what a
+transfer needs.
+
+The same site's technical data also tunes the metro profile: running tracks
+are at most 40 ‰ (so pitch is capped at 2.5°) and station tracks at most 3 ‰
+(a stop that seems tilted means the phone moved). Its longest gap between
+stations, Smíchovské nádraží – Radlická at 2240 m, came out at 2315 m on a
+real ride.
+
 ## Run it
 
 It is a static site with no build step. Sensors need HTTPS (or `localhost`).

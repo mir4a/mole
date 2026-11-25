@@ -32,7 +32,12 @@ export const VEHICLES = {
   metro: {
     label: 'Metro',
     noun: 'train',
-    tracker: {},
+    // Prague metro technical data (metroweb.cz): running tracks at most 40 ‰,
+    // station tracks at most 3 ‰, so a stop that seems tilted means the phone moved.
+    tracker: {
+      maxPitch: 2.5 * DEG,
+      stationPitch: 0.35 * DEG,
+    },
     gps: false,
     stops: 'stations',
     copy: {
