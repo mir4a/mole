@@ -12,6 +12,7 @@
 //                          after the ride. Either way every standstill resets
 //                          the speed drift: that is physics, not labelling.
 //   copy       setup-screen texts, keyed by data-copy="..." in index.html
+//   network    station data (js/stations.js) to name the stops, if any
 //   demo       options for simulateRide() (js/sim.js) behind "Demo ride"
 
 const DEG = Math.PI / 180;
@@ -40,6 +41,7 @@ export const VEHICLES = {
     },
     gps: false,
     stops: 'stations',
+    network: 'data/prague.json', // station names, order and platform depths
     copy: {
       note: 'Tuned for trains: smooth runs, gentle curves, level platforms.',
       openTitle: 'Open this page before you go underground',

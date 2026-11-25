@@ -158,6 +158,10 @@
     .halts button[aria-pressed="true"] { background: var(--go); border-color: var(--go); color: #06140c; font-weight: 650; }
     .pause-card { display: grid; gap: 4px; border-color: var(--amber); }
     .pause-card p { margin: 0; font-size: 14px; color: var(--muted); }
+    .start-row { display: grid; gap: 6px; margin-top: 12px; }
+    .start-row label { font-size: 13px; color: var(--muted); }
+    .start-row select { font: inherit; color: var(--fg); background: var(--panel-solid); border: 1px solid var(--line); border-radius: 10px; padding: 10px; min-height: 44px; }
+    .start-row .status { margin-top: 0; }
     .done-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
     .done-head button { min-height: 36px; padding: 6px 12px; font-size: 13px; }
   </style>
@@ -250,6 +254,11 @@
         <p data-copy="calibText">While the train is standing at a station, tap Start and don't touch the phone for 3 seconds. The first departure after that tells the app which way is forward.</p>
         <p data-copy="transferText">Changing lines? Tap Pause at the station and keep this page open while you walk: the phone's gyro carries the direction across. On the next train, fix the phone and tap Resume while it stands.</p>
         <p data-copy="finishText">At your last station, tap Finish as the train pulls in: you don't have to wait for it to stop.</p>
+        <div class="start-row" id="start-row" hidden>
+          <label for="start-station">Start station</label>
+          <select id="start-station"><option value="auto">Find from my location</option></select>
+          <span class="status" id="start-status"></span>
+        </div>
         <div class="calib">
           <svg class="ring" viewBox="0 0 54 54" aria-hidden="true">
             <circle class="bg" cx="27" cy="27" r="23"/>
@@ -294,6 +303,7 @@
       <span>distance <b id="hud-dist">0 m</b></span>
       <span><span id="hud-stops-label">stops</span> <b id="hud-stops">0</b></span>
       <span id="hud-gps" hidden>GPS <b id="hud-gps-speed">—</b></span>
+      <span id="hud-station" hidden><span id="hud-station-label">next</span> <b id="hud-station-name"></b></span>
       <span id="hud-play" hidden>replay <b id="hud-playtime">0:00</b></span>
     </div>
   </div>

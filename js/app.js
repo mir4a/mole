@@ -5,6 +5,7 @@ import { simulateRide } from './sim.js';
 import { VEHICLES, vehicleOf, vehicleId } from './vehicles.js';
 import { gpsReference, gpsDistance, gpsSpeed } from './gps.js';
 import { analyzeSensorCheck, poseOf } from './sensorcheck.js';
+import { loadNetwork, RouteMatcher } from './stations.js';
 import * as store from './store.js';
 
 const $ = (id) => document.getElementById(id);
@@ -61,6 +62,8 @@ function setVehicle(v) {
   vehicle = vehicleId(v);
   try { localStorage.setItem('mole.vehicle', vehicle); } catch {}
   for (const b of $('veh-switch').children) b.setAttribute('aria-checked', String(b.dataset.vehicle === vehicle));
+  $('start-row').hidden = !vehicleOf(vehicle).network;
+  if (vehicleOf(vehicle).network) setupStations(vehicleOf(vehicle).network);
   const copy = vehicleOf(vehicle).copy;
   for (const el of document.querySelectorAll('[data-copy]')) el.textContent = copy[el.dataset.copy] ?? VEHICLES.metro.copy[el.dataset.copy];
 }
@@ -98,7 +101,7 @@ $('btn-sensors').addEventListener('click', async () => {
   // Some browsers expose requestPermission but still deliver events, so judge by the data.
   if (!motion) motion = startMotion(onSample);
   setStatus(ui.sensorStatus, 'Waiting for sensor data…');
-  if (vehicleOf(vehicle).gps) askLocation();
+  if (vehicleOf(vehicle).gps || vehicleOf(vehicle).network) askLocation();
   setTimeout(() => checkSensors(res), 1500);
 });
 
@@ -126,7 +129,12 @@ function askLocation() {
   if (!('geolocation' in navigator)) { locationNote = 'no GPS in this browser'; return; }
   locationNote = 'asking for location…';
   navigator.geolocation.getCurrentPosition(
-    () => { locationNote = 'location ✓'; refreshSensorLine(); },
+    (pos) => {
+      locationNote = 'location ✓';
+      lastFix = { lat: pos.coords.latitude, lon: pos.coords.longitude, acc: pos.coords.accuracy, at: Date.now() };
+      updateStartFromFix();
+      refreshSensorLine();
+    },
     (e) => {
       locationNote = e.code === 1
         ? 'location blocked: Settings → Privacy & Security → Location Services → Safari Websites → While Using'
@@ -136,6 +144,63 @@ function askLocation() {
     { enableHighAccuracy: true, timeout: 15000 },
   );
 }
+// ---------------- stations (metro): which stop is which ----------------
+let network = null;         // station data for the current vehicle
+let lastFix = null;         // last GPS fix above ground { lat, lon, acc, at }
+let autoStart = null;       // nearest station found from lastFix
+let matcher = null;         // RouteMatcher for the ride on screen
+let stopNames = new Map();  // stop number -> { name, line } | 'tunnel'
+
+async function setupStations(url) {
+  network = await loadNetwork(url);
+  const sel = $('start-station');
+  if (!network || sel.options.length > 1) return;
+  for (const [line, list] of Object.entries(network.lines)) {
+    const g = document.createElement('optgroup');
+    g.label = `Line ${line}`;
+    list.forEach((st, i) => { const o = document.createElement('option'); o.value = `${line}:${i}`; o.textContent = `${st.name} (${line})`; g.appendChild(o); });
+    sel.appendChild(g);
+  }
+  updateStartFromFix();
+}
+
+function updateStartFromFix() {
+  if (!network) return;
+  if (!lastFix) { setStatus($('start-status'), 'No location yet: pick the station, or turn on the sensors above ground.'); return; }
+  const near = network.near(lastFix.lat, lastFix.lon, 1000);
+  autoStart = near[0] || null;
+  setStatus($('start-status'), autoStart
+    ? `Nearest: ${autoStart.name}, ${Math.round(autoStart.dist)} m away.`
+    : 'No metro station within 1 km of your last location: pick it here.', autoStart ? 'ok' : 'bad');
+}
+
+/** Start candidates for a ride: a station picked by hand, or the nearest one (all its lines). */
+function startCandidates() {
+  if (!network) return null;
+  const v = $('start-station').value;
+  if (v && v !== 'auto') {
+    const [line, i] = v.split(':');
+    return { name: network.station(line, +i).name, line, list: [{ line, index: +i }] };
+  }
+  if (autoStart) return { name: autoStart.name, list: network.byName(autoStart.name) };
+  return null;
+}
+
+function makeMatcher(start) {
+  if (!network || !start) return null;
+  const list = start.line ? network.byName(start.name).filter((x) => x.line === start.line) : network.byName(start.name);
+  return list.length ? new RouteMatcher(network, list) : null;
+}
+
+/** Names a stop that just happened; returns the label for its marker. */
+function nameStop(stop) {
+  if (!matcher) return undefined;
+  const r = matcher.onStop(stop.dist ?? 0);
+  if (r.kind === 'station') { stopNames.set(stop.n, { name: r.name, line: r.line }); return r.name; }
+  if (r.kind === 'tunnel') { stopNames.set(stop.n, 'tunnel'); return null; }
+  return undefined;
+}
+
 function refreshSensorLine() {
   if (!motion?.stats.hasAccel) return;
   checkSensors('granted');
@@ -296,11 +361,14 @@ function calibrateStep(tMs, a, r) {
       userAgent: navigator.userAgent, hz: motion.stats.hz, calibrationCount: rows.length,
     },
   };
+  const start = vehicleOf(vehicle).network ? startCandidates() : null;
+  if (start) rec.meta.start = { name: start.name, line: start.line };
   flushedRows = 0; chunkIdx = 0;
   store.saveRideMeta({ ...rec.meta, marks: rec.marks, sampleCount: 0 });
   flushTimer = setInterval(flush, 5000);
   mode = 'live';
   enterRide(false);
+  beginStations(rec.meta.start);
   toast(`Calibrated. Waiting for the ${vehicleOf(vehicle).noun} to pull away.`);
 }
 
@@ -389,6 +457,9 @@ let confirmed = new Set();  // halts the rider marked as real stops (confirm mod
 function enterRide(isReplay, kind = vehicle) {
   rideKind = vehicleId(kind);
   confirmed = new Set();
+  matcher = null;
+  stopNames = new Map();
+  $('hud-station').hidden = true;
   $('hud-stops-label').textContent = confirmMode() ? 'halts' : 'stops';
   ui.setup.hidden = true;
   ui.ride.hidden = false;
@@ -450,7 +521,7 @@ async function finishRide() {
   const last = tracker.finish();
   if (last) {
     scene.addSegment(last.points, { open: !last.arrived });
-    if (last.arrived) scene.addStop(last.stop.p, last.stop.n, tracker.psi);
+    if (last.arrived) scene.addStop(last.stop.p, last.stop.n, tracker.psi, nameStop(last.stop));
   }
   scene.setLive([]);
   updateGps(true);
@@ -482,15 +553,16 @@ function showSummary() {
   const confirm = confirmMode();
 
   // Segments as the rider sees them: in confirm mode, between confirmed stops only.
-  const isBreak = (k) => !confirm || confirmed.has(k);
+  const isBreak = (k) => (confirm ? confirmed.has(k) : stopNames.get(k) !== 'tunnel');
+  const nameOf = (k) => stopNames.get(k)?.name;
   const groups = [];
-  let cur = null, from = 0, num = 0;
+  let cur = null, from = nameOf(0) || '0', num = 0;
   segs.forEach((s, i) => {
     if (!cur) cur = { dist: 0, dur: 0, vmax: 0, list: [], from };
     cur.dist += s.dist; cur.dur += s.dur; cur.vmax = Math.max(cur.vmax, s.vmax); cur.list.push(s);
     const stopNo = s.open ? null : i + 1;
     if (s.open || i === segs.length - 1 || isBreak(stopNo)) {
-      const to = s.open ? 'no stop' : isBreak(stopNo) ? String(++num) : 'finish';
+      const to = s.open ? 'no stop' : isBreak(stopNo) ? nameOf(stopNo) || String(++num) : 'finish';
       groups.push({ ...cur, label: `${cur.from} → ${to}` });
       from = to; cur = null;
     }
@@ -625,6 +697,9 @@ function startReplay(recording, speed) {
   playT = 0;
   mode = 'replay';
   enterRide(true, recording.profile || 'metro');
+  // older recordings have no start station: use one picked by hand on the setup screen
+  const picked = $('start-station').value !== 'auto' ? startCandidates() : null;
+  beginStations(recording.start || (picked && { name: picked.name, line: picked.line }));
   toast(recording.kind === 'synthetic' ? `Demo: synthetic ride, ×${speed}` : `Replaying recording, ×${speed}`);
 }
 
@@ -678,12 +753,13 @@ function handleEvents() {
         break;
       case 'stop': {
         scene.addSegment(ev.points);
-        scene.addStop(ev.stop.p, ev.stop.n, tracker.psi);
-        scene.setLive([]);
         const s = ev.stop;
-        toast(confirmMode()
-          ? `Halted after ${fmtDist(s.dist)} (${fmtTime(s.dur)}, top ${Math.round(s.vmax * 3.6)} km/h)`
-          : `Stop ${s.n}: ${fmtDist(s.dist)} in ${fmtTime(s.dur)}, top ${Math.round(s.vmax * 3.6)} km/h`, 'good', 7000);
+        const label = nameStop(s);
+        scene.addStop(s.p, s.n, tracker.psi, label);
+        scene.setLive([]);
+        const how = `${fmtDist(s.dist)} in ${fmtTime(s.dur)}, top ${Math.round(s.vmax * 3.6)} km/h`;
+        toast(confirmMode() ? `Halted after ${fmtDist(s.dist)} (${fmtTime(s.dur)}, top ${Math.round(s.vmax * 3.6)} km/h)`
+          : label ? `${label}: ${how}` : label === null ? `Stopped in the tunnel after ${fmtDist(s.dist)}` : `Stop ${s.n}: ${how}`, 'good', 7000);
         break;
       }
       case 'handled':
@@ -696,16 +772,28 @@ function handleEvents() {
       case 'pause': {
         if (ev.closed) scene.addSegment(ev.closed.points, { open: !ev.closed.arrived });
         scene.setLive([]);
-        scene.setStopLabel(ev.stop.n, 'transfer', ev.stop.p, tracker.psi);
+        if (ev.closed?.arrived) nameStop(ev.closed.stop);
+        const here = stopNames.get(ev.stop.n);
+        scene.setStopLabel(ev.stop.n, here?.name ? `${here.name} · transfer` : 'transfer', ev.stop.p, tracker.psi);
         if (mode === 'replay') toast('Paused for a transfer');
         break;
       }
-      case 'resume':
+      case 'resume': {
+        const t = matcher?.transfer();
+        if (t) {
+          const before = tracker.pos.slice();
+          if (t.dz != null) { tracker.shiftElevation(t.dz); scene.addLink(before, tracker.pos.slice()); }
+          const h = t.dz == null ? 'height unknown' : `${Math.abs(t.dz).toFixed(0)} m ${t.dz >= 0 ? 'up' : 'down'}`;
+          toast(`Transfer at ${t.from.station.name}: line ${t.from.line} → ${t.to.line}, ${h}`, 'good', 9000);
+        } else if (matcher) {
+          toast("Couldn't tell which line you changed to, so the height is kept.", 'warn', 8000);
+        }
         toast(ev.headingKept
           ? `Resumed after ${fmtTime(ev.walkSec)}. The direction was carried across; the new forward axis comes with the first departure.`
           : "Resumed, but the screen was off during the walk: the new line's direction is a guess.", ev.headingKept ? 'good' : 'warn', 8000);
         $('pause-card').hidden = true;
         break;
+      }
       case 'moved':
         if (tracker.state === 'paused') break; // walking with the phone is expected
         toast('The phone was moved. At the next stop, tap Recalibrate.', 'warn', 9000);
@@ -733,12 +821,36 @@ function frame(now) {
     updateHud();
     if (tracker.state === 'moving' && mode !== 'done') scene.setLive(tracker.live);
     if (mode !== 'done') updateGps();
+    updateStationHud();
     scene.setTrain(tracker.pos, tracker.psi);
     scene.render();
   }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+/** Sets up station naming for the ride on screen from its start station. */
+async function beginStations(start) {
+  const url = rideVehicle().network;
+  if (!url || !start) return;
+  network = await loadNetwork(url);
+  matcher = makeMatcher(start);
+  if (!matcher) return;
+  stopNames.set(0, { name: start.name, line: start.line });
+  scene.setStopLabel(0, start.name);
+}
+
+/** "next Anděl" while moving, "at Radlická" while standing. */
+function updateStationHud() {
+  const cur = matcher?.current;
+  const el = $('hud-station');
+  if (!cur || mode === 'done') { el.hidden = true; return; }
+  const moving = tracker.state === 'moving';
+  const next = cur.dir != null ? network.station(cur.line, cur.index + cur.dir) : null;
+  el.hidden = false;
+  $('hud-station-label').textContent = moving && next ? 'next' : 'at';
+  $('hud-station-name').textContent = moving && next ? next.name : cur.station.name;
+}
 
 /** Redraws the GPS reference track (at most once a second, or when forced). */
 function updateGps(force = false) {

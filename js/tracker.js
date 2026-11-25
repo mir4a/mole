@@ -495,6 +495,11 @@ export class Tracker {
     this.events.push({ type: 'resume', t: this.lastT, headingKept: kept, walkSec: this.lastT - this.walkStart });
   }
 
+  /** Moves the current position up or down (a transfer to a deeper or shallower platform). */
+  shiftElevation(dz) {
+    this.pos = [this.pos[0], this.pos[1], this.pos[2] + dz];
+  }
+
   /** The train was clearly braking within the last 5 s (any 1 s window below -0.35 m/s²). */
   isBraking(seg) {
     const tEnd = seg.samples.at(-1).t;

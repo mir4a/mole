@@ -99,6 +99,17 @@ missing. Transfer stations differ a lot between lines (Můstek A 29.3 m / B
 40.3 m, Muzeum A 34 m / C 10 m, Florenc B 39 m / C 9.35 m), which is what a
 transfer needs.
 
+On a metro ride the page names the stops: the start station comes from the
+last GPS fix before going underground (or is picked by hand on the setup
+screen), the direction is chosen at the first stop by comparing the measured
+distance with the gaps to both neighbours, and then the ride walks along the
+line. A stop much shorter than the gap to the next station is a stop in the
+tunnel (a red signal): it still resets the speed drift but isn't a station. At
+a transfer (Pause / Resume) the matcher switches to the station's other line
+and moves the track up or down by the difference in platform depths, drawn as
+a vertical link. On a real ride Jinonice -> Florenc all eight stations came out
+right.
+
 The same site's technical data also tunes the metro profile: running tracks
 are at most 40 ‰ (so pitch is capped at 2.5°) and station tracks at most 3 ‰
 (a stop that seems tilted means the phone moved). Its longest gap between
@@ -131,7 +142,18 @@ replayed through the algorithm with *Open recording*.
 - `js/sensors.js`: DeviceMotion, iOS permission, screen wake lock
 - `js/vehicles.js`: per-vehicle tuning, behaviour, texts and demo routes
 - `js/sensorcheck.js`: one-time sensor check (accelerometer sign, gyro axes)
+- `js/stations.js`: station network, nearest station, stop naming and transfers
+- `data/prague.json`: Prague lines, stations, coordinates and platform depths
 - `js/gps.js`: GPS reference track for bus mode (local metres, alignment, distances)
 - `js/store.js`: IndexedDB storage of rides
 - `js/app.js`: UI flow (setup and calibration, ride, summary, replay)
 - `vendor/`: three.js r160 and OrbitControls, vendored for offline use
+
+## Backlog
+
+- Nice 3D models of a metro car, a tram and a bus for the vehicle marker
+  (procedural three.js geometry, per vehicle in `js/vehicles.js`).
+- Ground elevation over each station (a terrain service, fetched on the phone)
+  to pin the whole elevation profile, not only transfers.
+- The walking part of a transfer: steps and heading for the horizontal path.
+- Snap the track to the real line geometry (OpenStreetMap).

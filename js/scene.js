@@ -11,6 +11,7 @@ const COLORS = {
 export class TunnelScene {
   constructor(container) {
     this.vex = 1; // vertical exaggeration
+    this.links = [];          // vertical links between platforms at transfers
     this.numberStops = true; // metro stations get numbers; bus and tram halts don't
     this.k = 1;   // visual scale of tube/platform/labels (grows in overview so they stay visible)
     this.mode = 'follow';
@@ -97,7 +98,7 @@ export class TunnelScene {
   }
 
   clear() {
-    this.segments = []; this.stops = []; this.livePts = []; this.gpsPts = [];
+    this.segments = []; this.stops = []; this.livePts = []; this.gpsPts = []; this.links = [];
     this.trainPos = [0, 0, 0]; this.heading = 0;
     this.rebuild();
     this.addStop([0, 0, 0], 0, 0);
@@ -137,6 +138,21 @@ export class TunnelScene {
   addStop(p, n, heading, label) {
     this.stops.push({ p, n, heading, label });
     this.buildStop(p, n, heading, label);
+  }
+
+  /** A vertical link between two platforms at a transfer. */
+  addLink(a, b) {
+    const l = { a, b };
+    this.links.push(l);
+    this.buildLink(l);
+  }
+
+  buildLink({ a, b }) {
+    const pa = this.toThree(a), pb = this.toThree(b);
+    if (pa.distanceTo(pb) < 0.5) return;
+    const geo = new THREE.TubeGeometry(new THREE.LineCurve3(pa, pb), 4, 1.2 * this.k, 8, false);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: COLORS.platform, transparent: true, opacity: 0.6 }));
+    this.tunnelGroup.add(mesh);
   }
 
   /** Relabels the stop numbered n, adding it if it isn't drawn yet. */
@@ -240,6 +256,7 @@ export class TunnelScene {
       }
     }
     for (const s of this.segments) this.buildSegment(s);
+    for (const l of this.links) this.buildLink(l);
     const stops = this.stops; this.stops = [];
     for (const s of stops) this.addStop(s.p, s.n, s.heading, s.label);
     this.setLive(this.livePts, true);
@@ -301,20 +318,23 @@ export class TunnelScene {
 
 function makeLabel(text) {
   const c = document.createElement('canvas');
-  c.width = 256; c.height = 128;
+  const probe = c.getContext('2d');
+  probe.font = '600 48px system-ui, sans-serif';
+  const W = Math.min(768, Math.max(256, Math.ceil(probe.measureText(text).width) + 80));
+  c.width = W; c.height = 128;
   const x = c.getContext('2d');
   x.fillStyle = 'rgba(11,15,18,0.85)';
   x.beginPath();
-  if (x.roundRect) x.roundRect(28, 20, 200, 88, 18); else x.rect(28, 20, 200, 88);
+  if (x.roundRect) x.roundRect(28, 20, W - 56, 88, 18); else x.rect(28, 20, W - 56, 88);
   x.fill();
   x.strokeStyle = '#4fd08a'; x.lineWidth = 6; x.stroke();
   x.fillStyle = '#e8edf0';
-  let size = 56; // shrink longer words ("transfer") to fit the box
-  do { x.font = `600 ${size}px system-ui, sans-serif`; size -= 2; } while (x.measureText(text).width > 176 && size > 20);
+  let size = 48;
+  do { x.font = `600 ${size}px system-ui, sans-serif`; size -= 2; } while (x.measureText(text).width > W - 80 && size > 18);
   x.textAlign = 'center'; x.textBaseline = 'middle';
-  x.fillText(text, 128, 66);
+  x.fillText(text, W / 2, 66);
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, transparent: true }));
-  s.scale.set(48, 24, 1);
+  s.scale.set(48 * (W / 256), 24, 1);
   s.position.y = 22;
   s.renderOrder = 10;
   return s;

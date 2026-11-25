@@ -2,6 +2,8 @@
 // compares stop-to-stop distances and stop positions with ground truth.
 import { simulateRide, simulateSensorCheck, simulateTransfer } from '../js/sim.js';
 import { VEHICLES } from '../js/vehicles.js';
+import { Network, RouteMatcher, haversine } from '../js/stations.js';
+import fs from 'fs';
 
 const BUS_OPTS = VEHICLES.bus.demo, TRAM_OPTS = VEHICLES.tram.demo;
 import { analyzeSensorCheck } from '../js/sensorcheck.js';
@@ -114,6 +116,25 @@ for (const [name, o] of [['turn 110°', {}], ['iPhone, turn -70°', { gyroMap: '
   const ev = f.tracker.events.find((e) => e.type === 'resume');
   const ok = ev && ev.headingKept === false;
   console.log(`\n# transfer with the screen off mid-walk: heading kept = ${ev?.headingKept} → ${ok ? 'OK' : 'FAIL'}`);
+  if (!ok) failed++;
+}
+// Station matching on the Prague data: a ride from Zličín along line B with a
+// stop at a red signal, then a transfer at Můstek to line A.
+{
+  const net = new Network(JSON.parse(fs.readFileSync(new URL('../data/prague.json', import.meta.url))));
+  const B = net.lines.B, zl = B.findIndex((x) => x.name === 'Zličín'), mu = B.findIndex((x) => x.name === 'Můstek');
+  const dir = mu > zl ? 1 : -1;
+  const m = new RouteMatcher(net, net.byName('Zličín'));
+  const got = [];
+  for (let i = zl; i !== mu; i += dir) {
+    const d = haversine(B[i], B[i + dir]) * 1.15;
+    if (i === zl + 4 * dir) { m.onStop(d * 0.3); m.onStop(d * 0.7); } // a red signal in the tunnel
+    else m.onStop(d);
+    got.push(m.current.station.name);
+  }
+  const t = m.transfer();
+  const ok = got.at(-1) === 'Můstek' && got.length === Math.abs(mu - zl) && t?.to.line === 'A' && Math.abs(t.dz - 11) < 0.01;
+  console.log(`\n# stations: Zličín → ${got.at(-1)} (${got.length} stations, a tunnel stop skipped), transfer to ${t?.to.line}, height ${t?.dz?.toFixed(1)} m → ${ok ? 'OK' : 'FAIL'}`);
   if (!ok) failed++;
 }
 process.exit(failed ? 1 : 0);
