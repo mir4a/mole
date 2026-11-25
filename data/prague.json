@@ -1,0 +1,502 @@
+{
+ "city": "Prague",
+ "source": "Wikidata (P16 = Prague Metro Q190271; P197 adjacent station; P625; P4511 depth)",
+ "lines": {
+  "A": [
+   {
+    "name": "Nemocnice Motol",
+    "wikidata": "Q5063913",
+    "lat": 50.0753,
+    "lon": 14.341,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Petřiny",
+    "wikidata": "Q3390976",
+    "lat": 50.086459,
+    "lon": 14.345147,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Nádraží Veleslavín",
+    "wikidata": "Q11878329",
+    "lat": 50.095854,
+    "lon": 14.347399,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Bořislavka",
+    "wikidata": "Q3494217",
+    "lat": 50.09846,
+    "lon": 14.362713,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Dejvická",
+    "wikidata": "Q2475128",
+    "lat": 50.100594,
+    "lon": 14.392014,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Hradčanská",
+    "wikidata": "Q2992657",
+    "lat": 50.097214,
+    "lon": 14.404569,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Malostranská",
+    "wikidata": "Q2643308",
+    "lat": 50.091236,
+    "lon": 14.409492,
+    "depth": 32.0,
+    "groundElevation": null
+   },
+   {
+    "name": "Staroměstská",
+    "wikidata": "Q2639826",
+    "lat": 50.088185,
+    "lon": 14.417633,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Můstek",
+    "wikidata": "Q2137688",
+    "lat": 50.083784,
+    "lon": 14.423339,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Muzeum",
+    "wikidata": "Q2655155",
+    "lat": 50.079865,
+    "lon": 14.430808,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Náměstí Míru",
+    "wikidata": "Q1972106",
+    "lat": 50.075333,
+    "lon": 14.43769,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Jiřího z Poděbrad",
+    "wikidata": "Q2163001",
+    "lat": 50.07783,
+    "lon": 14.450295,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Flora",
+    "wikidata": "Q2309787",
+    "lat": 50.077631,
+    "lon": 14.461236,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Želivského",
+    "wikidata": "Q2659859",
+    "lat": 50.078408,
+    "lon": 14.47409,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Strašnická",
+    "wikidata": "Q1867691",
+    "lat": 50.072778,
+    "lon": 14.491111,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Skalka",
+    "wikidata": "Q2659765",
+    "lat": 50.068056,
+    "lon": 14.5075,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Depo Hostivař",
+    "wikidata": "Q2338829",
+    "lat": 50.075711,
+    "lon": 14.515628,
+    "depth": null,
+    "groundElevation": null
+   }
+  ],
+  "B": [
+   {
+    "name": "Černý Most",
+    "wikidata": "Q3491244",
+    "lat": 50.10917,
+    "lon": 14.5775,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Rajská zahrada",
+    "wikidata": "Q1457113",
+    "lat": 50.106667,
+    "lon": 14.560556,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Hloubětín",
+    "wikidata": "Q642695",
+    "lat": 50.10611,
+    "lon": 14.53806,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Kolbenova",
+    "wikidata": "Q2235385",
+    "lat": 50.11028,
+    "lon": 14.51306,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Vysočanská",
+    "wikidata": "Q2575954",
+    "lat": 50.11139,
+    "lon": 14.50194,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Českomoravská",
+    "wikidata": "Q2340872",
+    "lat": 50.10611,
+    "lon": 14.49167,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Palmovka",
+    "wikidata": "Q2980816",
+    "lat": 50.103611,
+    "lon": 14.474444,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Invalidovna",
+    "wikidata": "Q2326246",
+    "lat": 50.09667,
+    "lon": 14.46306,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Křižíkova",
+    "wikidata": "Q1847711",
+    "lat": 50.0925,
+    "lon": 14.45139,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Florenc",
+    "wikidata": "Q1877386",
+    "lat": 50.091,
+    "lon": 14.439,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Náměstí Republiky",
+    "wikidata": "Q2088679",
+    "lat": 50.08891,
+    "lon": 14.430471,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Můstek",
+    "wikidata": "Q2137688",
+    "lat": 50.083784,
+    "lon": 14.423339,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Národní třída",
+    "wikidata": "Q2552833",
+    "lat": 50.08,
+    "lon": 14.42,
+    "depth": 39.0,
+    "groundElevation": null
+   },
+   {
+    "name": "Karlovo náměstí",
+    "wikidata": "Q2661727",
+    "lat": 50.076,
+    "lon": 14.418,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Anděl",
+    "wikidata": "Q1982876",
+    "lat": 50.070289,
+    "lon": 14.403947,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Smíchovské nádraží",
+    "wikidata": "Q2132771",
+    "lat": 50.061277,
+    "lon": 14.409069,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Radlická",
+    "wikidata": "Q2314277",
+    "lat": 50.05778,
+    "lon": 14.38861,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Jinonice",
+    "wikidata": "Q771525",
+    "lat": 50.05444,
+    "lon": 14.37111,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Nové Butovice",
+    "wikidata": "Q938057",
+    "lat": 50.050833,
+    "lon": 14.351944,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Hůrka",
+    "wikidata": "Q2063169",
+    "lat": 50.05,
+    "lon": 14.343,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Lužiny",
+    "wikidata": "Q2892529",
+    "lat": 50.045,
+    "lon": 14.33,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Luka",
+    "wikidata": "Q1820709",
+    "lat": 50.045556,
+    "lon": 14.322222,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Stodůlky",
+    "wikidata": "Q643234",
+    "lat": 50.046944,
+    "lon": 14.306944,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Zličín",
+    "wikidata": "Q1962305",
+    "lat": 50.053611,
+    "lon": 14.290556,
+    "depth": null,
+    "groundElevation": null
+   }
+  ],
+  "C": [
+   {
+    "name": "Letňany",
+    "wikidata": "Q2205581",
+    "lat": 50.12528,
+    "lon": 14.51389,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Prosek",
+    "wikidata": "Q2321857",
+    "lat": 50.11861,
+    "lon": 14.49889,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Střížkov",
+    "wikidata": "Q2657248",
+    "lat": 50.12611,
+    "lon": 14.48944,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Ládví",
+    "wikidata": "Q1556730",
+    "lat": 50.12667,
+    "lon": 14.46944,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Kobylisy",
+    "wikidata": "Q1759754",
+    "lat": 50.12306,
+    "lon": 14.45167,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Nádraží Holešovice",
+    "wikidata": "Q8043200",
+    "lat": 50.108881,
+    "lon": 14.440105,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Vltavská",
+    "wikidata": "Q2614771",
+    "lat": 50.09861,
+    "lon": 14.4375,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Florenc",
+    "wikidata": "Q1877386",
+    "lat": 50.091,
+    "lon": 14.439,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Hlavní nádraží",
+    "wikidata": "Q2383883",
+    "lat": 50.0835,
+    "lon": 14.43412,
+    "depth": 6.5,
+    "groundElevation": null
+   },
+   {
+    "name": "Muzeum",
+    "wikidata": "Q2655155",
+    "lat": 50.079865,
+    "lon": 14.430808,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "I. P. Pavlova",
+    "wikidata": "Q1880944",
+    "lat": 50.07528,
+    "lon": 14.43111,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Vyšehrad",
+    "wikidata": "Q2013931",
+    "lat": 50.063056,
+    "lon": 14.430556,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Pražského povstání",
+    "wikidata": "Q2084685",
+    "lat": 50.05611,
+    "lon": 14.43444,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Pankrác",
+    "wikidata": "Q2618245",
+    "lat": 50.05083,
+    "lon": 14.43944,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Budějovická",
+    "wikidata": "Q2657773",
+    "lat": 50.044444,
+    "lon": 14.448889,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Kačerov",
+    "wikidata": "Q586457",
+    "lat": 50.04194,
+    "lon": 14.46028,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Roztyly",
+    "wikidata": "Q2552037",
+    "lat": 50.03722,
+    "lon": 14.47778,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Chodov",
+    "wikidata": "Q2038287",
+    "lat": 50.03083,
+    "lon": 14.49083,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Opatov",
+    "wikidata": "Q2446909",
+    "lat": 50.027778,
+    "lon": 14.508333,
+    "depth": null,
+    "groundElevation": null
+   },
+   {
+    "name": "Háje",
+    "wikidata": "Q2655164",
+    "lat": 50.030556,
+    "lon": 14.526667,
+    "depth": null,
+    "groundElevation": null
+   }
+  ]
+ },
+ "license": "Wikidata, CC0",
+ "note": "Lines in order from one terminus to the other. depth = metres below the surface (Wikidata P4511), null where unknown. groundElevation (m above sea level) still to be filled."
+}
