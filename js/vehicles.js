@@ -25,6 +25,7 @@ const streetCopy = (noun, plural, curves) => ({
   calibTitle: 'Calibrate at a stop',
   calibText: `While the ${noun} is standing at a stop, tap Start and don't touch the phone for 3 seconds. The first pull-away after that tells the app which way is forward.`,
   finishText: `At your stop, tap Finish as the ${noun} pulls in: you don't have to wait for it to stop.`,
+  transferText: `Changing ${noun}s? Tap Pause at the stop and keep this page open while you walk: the phone's gyro carries the direction across. On the next ${noun}, fix the phone and tap Resume while it stands.`,
 });
 
 export const VEHICLES = {
@@ -43,6 +44,7 @@ export const VEHICLES = {
       calibTitle: 'Calibrate at a station',
       calibText: "While the train is standing at a station, tap Start and don't touch the phone for 3 seconds. The first departure after that tells the app which way is forward.",
       finishText: "At your last station, tap Finish as the train pulls in: you don't have to wait for it to stop.",
+      transferText: 'Changing lines? Tap Pause at the station and keep this page open while you walk: the phone\'s gyro carries the direction across. On the next train, fix the phone and tap Resume while it stands.',
       demoNote: 'The demo runs a synthetic 4-segment metro ride through the same algorithm, 25× faster than real time.',
     },
     demo: {},

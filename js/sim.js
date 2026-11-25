@@ -72,7 +72,7 @@ export function simulateRide(o = {}) {
   const stopsTruth = [[0, 0, 0]];
   const truthAtt = []; // [t, pitch, heading] while moving
   const trackLengths = [];
-  let t = 0, x = 0, y = 0, z = 0, psi = 0;
+  let t = 0, x = 0, y = 0, z = 0, psi = (o.startHeading || 0);
 
   // optional GPS: the route rotated to a random compass heading, 1 Hz, ~4 m noise
   const gps = [];
@@ -177,7 +177,7 @@ export function simulateRide(o = {}) {
       hz, calibrationCount, samples,
       gps: o.gps ? gps : undefined, startedAt: new Date().toISOString(),
     },
-    truth, stopsTruth, trackLengths, truthAtt,
+    truth, stopsTruth, trackLengths, truthAtt, endHeading: psi, mount: M,
   };
 }
 
@@ -216,4 +216,68 @@ export function simulateSensorCheck({ platform = 'spec', gyroReversed = false, s
     samples.push({ t, a, r: rr });
   }
   return samples;
+}
+
+/**
+ * A transfer: ride line A, pause, walk to line B with the phone in hand
+ * (turning, swinging, a detour that turns 120° and back), resume on line B,
+ * which heads turnDeg off A's last heading, with the phone lying differently.
+ * Returns a recording with pause/resume marks plus truth for both lines.
+ */
+export function simulateTransfer(o = {}) {
+  const hz = o.hz || 60, g = 9.80665, dt = 1 / hz;
+  const gyroMap = o.gyroMap || 'spec', seed = o.seed ?? 4, dwell = o.dwell || 20;
+  const accBias = o.accBias || [0.04, -0.03, 0.05], gyroBias = o.gyroBias || [0.15, -0.1, 0.2];
+  const common = { gyroMap, accBias, gyroBias, dwell, hz };
+  const A = simulateRide({ ...common, seed, route: o.routeA || DEFAULT_ROUTE.slice(0, 2), phone: o.phoneA || { yaw: 30, pitch: -70, roll: 10 } });
+  const psiB = A.endHeading + (o.turnDeg ?? 110) * DEG;
+  const B = simulateRide({ ...common, seed: seed + 1, route: o.routeB || DEFAULT_ROUTE.slice(2), phone: o.phoneB || { yaw: -60, pitch: 0, roll: 0 }, startHeading: psiB });
+
+  const C1 = matMul(carToWorld(A.endHeading, 0, 0), A.mount);
+  const C2 = matMul(carToWorld(psiB, 0, 0), B.mount);
+  // relative rotation C1 -> C2 as axis-angle, walked along smoothly
+  const Rrel = matMul(matT(C1), C2);
+  const ang = Math.acos(Math.max(-1, Math.min(1, (Rrel[0][0] + Rrel[1][1] + Rrel[2][2] - 1) / 2)));
+  const ax = ang > 1e-6 ? [Rrel[2][1] - Rrel[1][2], Rrel[0][2] - Rrel[2][0], Rrel[1][0] - Rrel[0][1]].map((v) => v / (2 * Math.sin(ang))) : [0, 0, 1];
+  const axisAngle = (k, th) => {
+    const c = Math.cos(th), s = Math.sin(th), C = 1 - c, [x, y, z] = k;
+    return [[c + x * x * C, x * y * C - z * s, x * z * C + y * s], [y * x * C + z * s, c + y * y * C, y * z * C - x * s], [z * x * C - y * s, z * y * C + x * s, c + z * z * C]];
+  };
+  const Rz = (b) => [[Math.cos(b), -Math.sin(b), 0], [Math.sin(b), Math.cos(b), 0], [0, 0, 1]];
+  const walkSec = o.walkSec || 120, r = rng(seed + 7);
+  const att = (t) => {
+    const u = Math.min(Math.max(t / walkSec, 0), 1), env = Math.sin(Math.PI * u);
+    const detour = Rz(120 * DEG * Math.sin(Math.PI * u) ** 2);         // turn a corner and back
+    const sway = axisAngle([1, 0, 0], 0.25 * env * Math.sin(2 * Math.PI * 0.9 * t));
+    return matMul(detour, matMul(C1, matMul(axisAngle(ax, ang * (0.5 - 0.5 * Math.cos(Math.PI * u))), sway)));
+  };
+  const walkRows = [];
+  const tA = A.recording.samples.at(-1)[0] / 1000 + dt;
+  let Cp = att(0);
+  for (let t = 0; t < walkSec; t += dt) {
+    const C = att(t);
+    const aw = [0.5 * Math.sin(2 * Math.PI * 1.8 * t), 0.3 * Math.cos(2 * Math.PI * 0.9 * t), 1.5 * Math.sin(2 * Math.PI * 1.8 * t)];
+    const f = mulT(C, [aw[0], aw[1], aw[2] + g]).map((v, i) => (gyroMap === 'webkit' ? -v : v) + accBias[i] + gauss(r) * 0.3);
+    const dR = matMul(matT(Cp), C);
+    const w = [(dR[2][1] - dR[1][2]) / (2 * dt), (dR[0][2] - dR[2][0]) / (2 * dt), (dR[1][0] - dR[0][1]) / (2 * dt)];
+    Cp = C;
+    const wd = w.map((v, i) => v / DEG + gyroBias[i] + gauss(r) * 0.5);
+    const rr = gyroMap === 'spec' ? [wd[2], wd[0], wd[1]] : [wd[0], wd[1], wd[2]];
+    walkRows.push(packSample((tA + t) * 1000, f, rr));
+  }
+  const tB = tA + walkSec;
+  const bRows = B.recording.samples.map((row) => [Math.round((row[0] / 1000 + tB) * 1e4) / 10, ...row.slice(1)]);
+  const aRows = A.recording.samples;
+  const pauseAt = aRows.length - Math.round((dwell / 2) * hz);
+  const resumeFrom = aRows.length + walkRows.length + hz, resumeTo = resumeFrom + 3 * hz;
+  const endA = A.stopsTruth.at(-1);
+  return {
+    recording: {
+      ...A.recording, samples: [...aRows, ...walkRows, ...bRows],
+      marks: [{ type: 'pause', at: pauseAt }, { type: 'resume', from: resumeFrom, to: resumeTo }],
+    },
+    stopsA: A.stopsTruth,
+    stopsB: B.stopsTruth.map((p) => [p[0] + endA[0], p[1] + endA[1], p[2] + endA[2]]),
+    walkRows: walkRows.length,
+  };
 }

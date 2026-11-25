@@ -156,6 +156,8 @@
     .halts li span { min-width: 0; }
     .halts button { min-height: 36px; padding: 6px 12px; font-size: 13px; flex: none; }
     .halts button[aria-pressed="true"] { background: var(--go); border-color: var(--go); color: #06140c; font-weight: 650; }
+    .pause-card { display: grid; gap: 4px; border-color: var(--amber); }
+    .pause-card p { margin: 0; font-size: 14px; color: var(--muted); }
     .done-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
     .done-head button { min-height: 36px; padding: 6px 12px; font-size: 13px; }
   </style>
@@ -246,6 +248,7 @@
       <li id="st-calib">
         <h2 data-copy="calibTitle">Calibrate at a station</h2>
         <p data-copy="calibText">While the train is standing at a station, tap Start and don't touch the phone for 3 seconds. The first departure after that tells the app which way is forward.</p>
+        <p data-copy="transferText">Changing lines? Tap Pause at the station and keep this page open while you walk: the phone's gyro carries the direction across. On the next train, fix the phone and tap Resume while it stands.</p>
         <p data-copy="finishText">At your last station, tap Finish as the train pulls in: you don't have to wait for it to stop.</p>
         <div class="calib">
           <svg class="ring" viewBox="0 0 54 54" aria-hidden="true">
@@ -297,6 +300,10 @@
 
   <div class="hud-bottom">
     <div class="toasts" id="toasts" aria-live="polite"></div>
+    <div class="card pause-card" id="pause-card" hidden>
+      <b id="pause-title">Paused</b>
+      <p id="pause-text"></p>
+    </div>
     <div class="card" id="debug" hidden></div>
     <div class="card done-sheet" id="done" hidden>
       <div class="done-head"><h2>Ride finished</h2><button id="btn-hide-summary">Hide</button></div>
@@ -314,6 +321,7 @@
       <button id="btn-summary" data-in="done">Summary</button>
       <button id="btn-vex" data-in="ride done">Height ×1</button>
       <button id="btn-fit" data-in="done">Reset view</button>
+      <button id="btn-pause" data-in="ride">Pause</button>
       <button id="btn-recal" hidden>Recalibrate</button>
       <button id="btn-debug" data-in="ride" aria-label="Technical data">Data</button>
       <button id="btn-finish" data-in="ride">Finish</button>

@@ -139,6 +139,12 @@ export class TunnelScene {
     this.buildStop(p, n, heading, label);
   }
 
+  /** Relabels the stop numbered n, adding it if it isn't drawn yet. */
+  setStopLabel(n, label, p, heading = 0) {
+    const s = this.stops.find((x) => x.n === n);
+    if (s) { s.label = label; this.rebuild(); } else if (p) this.addStop(p, n, heading, label);
+  }
+
   /** Relabels all stops at once (index = stop number; 'start' at 0). */
   setStopLabels(labels) {
     this.stops.forEach((s, i) => { s.label = labels[i]; });
@@ -303,7 +309,8 @@ function makeLabel(text) {
   x.fill();
   x.strokeStyle = '#4fd08a'; x.lineWidth = 6; x.stroke();
   x.fillStyle = '#e8edf0';
-  x.font = '600 56px system-ui, sans-serif';
+  let size = 56; // shrink longer words ("transfer") to fit the box
+  do { x.font = `600 ${size}px system-ui, sans-serif`; size -= 2; } while (x.measureText(text).width > 176 && size > 20);
   x.textAlign = 'center'; x.textBaseline = 'middle';
   x.fillText(text, 128, 66);
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, transparent: true }));

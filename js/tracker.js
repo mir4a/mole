@@ -149,6 +149,7 @@ export class Tracker {
   push(s) {
     if (!this.calibrated) return;
     s = this.norm(s);
+    if (this.state === 'paused') return this.pushPaused(s);
     const o = this.o;
     const dt = this.lastT == null ? 0 : clamp(s.t - this.lastT, 0, 0.1);
     this.lastT = s.t;
@@ -261,6 +262,14 @@ export class Tracker {
     this.F = F;
     this.L = cross(this.U0, this.F);
     if (!keepSignOf) this.events.push({ type: 'axis', t: this.lastT });
+    // after a transfer: the phone's attitude, carried by the gyro through the
+    // walk, says where the new line's forward axis points in the old frame
+    if (!keepSignOf && this.walkAtResume) {
+      const h = attitude(this.walkAtResume, this.F, this.psi).psi;
+      this.psi = h;
+      if (this.seg) this.seg.psi0 = h;
+      this.walkAtResume = null;
+    }
   }
 
   // ---------- live (provisional) integration ----------
@@ -426,6 +435,65 @@ export class Tracker {
     return out;
   }
 
+  // ---------- pause for a transfer ----------
+
+  /**
+   * Pause (e.g. walking to another line). A ride still moving is closed as by
+   * finish(). While paused the phone's attitude is carried by the gyro, with
+   * a slow tilt correction from gravity, so resume() knows how the phone
+   * turned on the way to the next train.
+   */
+  pause() {
+    if (this.state === 'paused' || !this.calibrated) return;
+    const wasMoving = this.state === 'moving';
+    const closed = wasMoving ? this.finish() : null;
+    const up = normalize(this.g0);
+    this.walkR = stationFrame(up, this.F || this.E1, this.psi);
+    this.walkLost = false;
+    this.walkLpA = this.g0.slice();
+    this.walkStart = this.lastT;
+    let stop = this.stops.at(-1);
+    if (wasMoving && !closed?.arrived) {
+      stop = { p: this.pos.slice(), t: this.lastT, dwell: 0, n: this.stops.length };
+      this.stops.push(stop);
+    }
+    stop.transfer = true;
+    this.state = 'paused';
+    this.seg = null; this.live = []; this.v = 0;
+    this.events.push({ type: 'pause', t: this.lastT, closed, stop });
+  }
+
+  pushPaused(s) {
+    const raw = this.lastT == null ? 0 : s.t - this.lastT;
+    if (raw > 0.3) this.walkLost = true; // the screen went off: rotation unknown
+    const dt = clamp(raw, 0, 0.1);
+    this.lastT = s.t;
+    const w = this.mapGyro(s.r ? sub(s.r, this.rBias) : [0, 0, 0]);
+    // gravity nudges the tilt back (walking shakes, so only gently and only
+    // when the phone isn't being accelerated much)
+    const k = 1 - Math.exp(-dt / 0.5);
+    for (let i = 0; i < 3; i++) this.walkLpA[i] += (s.a[i] - this.walkLpA[i]) * k;
+    let corr = [0, 0, 0];
+    if (Math.abs(len(this.walkLpA) - this.gMag) < 1.0) {
+      const m = normalize(this.walkLpA), zUp = this.walkR[2];
+      corr = scale(cross(m, zUp), 1 / 3); // ~3 s time constant
+    }
+    this.walkR = rotateBody(this.walkR, add(w, corr), dt);
+  }
+
+  /**
+   * Resume on the next vehicle from a few still seconds. The forward axis is
+   * learned again at the first departure; the heading is carried over unless
+   * the walk had a gap.
+   */
+  resume(samples) {
+    if (this.state !== 'paused') return;
+    const R = this.walkR, kept = !this.walkLost;
+    this.calibrate(samples);
+    this.walkAtResume = kept ? R : null;
+    this.events.push({ type: 'resume', t: this.lastT, headingKept: kept, walkSec: this.lastT - this.walkStart });
+  }
+
   /** The train was clearly braking within the last 5 s (any 1 s window below -0.35 m/s²). */
   isBraking(seg) {
     const tEnd = seg.samples.at(-1).t;
@@ -580,7 +648,8 @@ export function createFeeder(rec, opts) {
   const tr = new Tracker({ profile: rec.profile, platform, sensorCheck: rec.sensorCheck, ...opts });
   const calN = Math.min(Math.max(rec.calibrationCount || 0, 30), samples.length);
   tr.calibrate(samples.slice(0, calN));
-  const recals = (rec.marks || []).filter((m) => m.type === 'recal').sort((a, b) => a.from - b.from);
+  // marks: recal {from, to}, pause {at}, resume {from, to} (sample indices)
+  const marks = (rec.marks || []).map((m) => ({ ...m, at: m.at ?? m.from }));
   const t0 = samples[0]?.t ?? 0;
   let i = calN;
   return {
@@ -589,8 +658,13 @@ export function createFeeder(rec, opts) {
     get time() { return (samples[Math.min(i, samples.length - 1)]?.t ?? t0) - t0; },
     feedUntil(tSec) {
       while (i < samples.length && samples[i].t - t0 <= tSec) {
-        const m = recals.find((x) => x.from === i);
-        if (m) { tr.calibrate(samples.slice(m.from, m.to)); i = m.to; continue; }
+        const m = marks.find((x) => x.at === i && !x.done);
+        if (m) {
+          m.done = true;
+          if (m.type === 'recal') { tr.calibrate(samples.slice(m.from, m.to)); i = m.to; continue; }
+          if (m.type === 'resume') { tr.resume(samples.slice(m.from, m.to)); i = m.to; continue; }
+          if (m.type === 'pause') tr.pause();
+        }
         tr.push(samples[i++]);
       }
       return i >= samples.length;

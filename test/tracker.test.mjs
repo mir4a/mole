@@ -1,11 +1,11 @@
 // node test/tracker.test.mjs — runs synthetic rides through the tracker and
 // compares stop-to-stop distances and stop positions with ground truth.
-import { simulateRide, simulateSensorCheck } from '../js/sim.js';
+import { simulateRide, simulateSensorCheck, simulateTransfer } from '../js/sim.js';
 import { VEHICLES } from '../js/vehicles.js';
 
 const BUS_OPTS = VEHICLES.bus.demo, TRAM_OPTS = VEHICLES.tram.demo;
 import { analyzeSensorCheck } from '../js/sensorcheck.js';
-import { replayRecording } from '../js/tracker.js';
+import { replayRecording, createFeeder } from '../js/tracker.js';
 import { gpsReference, gpsDistance } from '../js/gps.js';
 
 const cases = [
@@ -89,6 +89,31 @@ for (const [platform, gyroReversed, want] of [
   const endGap = (tr) => Math.hypot(tr.stops.at(-1).p[0] - ref.stops.at(-1).p[0], tr.stops.at(-1).p[1] - ref.stops.at(-1).p[1]);
   const ok = endGap(checked) < 5 && endGap(plain) > 200;
   console.log(`\n# reversed gyro ride: end ${endGap(plain).toFixed(0)} m off without the check, ${endGap(checked).toFixed(0)} m with it → ${ok ? 'OK' : 'FAIL'}`);
+  if (!ok) failed++;
+}
+// Transfer: pause at the end of line A, walk with the phone in hand, resume on
+// line B. The gyro must carry the heading so line B points the right way.
+for (const [name, o] of [['turn 110°', {}], ['iPhone, turn -70°', { gyroMap: 'webkit', turnDeg: -70, seed: 9 }], ['turn 180°, 5 min walk', { turnDeg: 180, walkSec: 300, seed: 2 }]]) {
+  const sim = simulateTransfer(o);
+  const tr = replayRecording(sim.recording);
+  const iT = tr.stops.findIndex((x) => x.transfer);
+  const e0 = tr.stops[iT]?.p, e1 = tr.stops[iT + 1]?.p, t0 = sim.stopsB[0], t1 = sim.stopsB[1];
+  const err = e1 ? ((Math.atan2(e1[1] - e0[1], e1[0] - e0[0]) - Math.atan2(t1[1] - t0[1], t1[0] - t0[0])) * 180 / Math.PI + 540) % 360 - 180 : 999;
+  const ok = iT === sim.stopsA.length - 1 && tr.stops.length === sim.stopsA.length + sim.stopsB.length - 1 && Math.abs(err) < 10;
+  console.log(`\n# transfer, ${name}: line B points ${err.toFixed(1)}° off → ${ok ? 'OK' : 'FAIL'}`);
+  if (!ok) failed++;
+}
+// The screen went off during the walk: the heading must be reported as lost.
+{
+  const sim = simulateTransfer({ seed: 5 });
+  const rec = sim.recording, rows = rec.samples;
+  const pause = rec.marks[0].at, cut = pause + 30 * 60; // drop 20 s of the walk
+  const samples = [...rows.slice(0, cut), ...rows.slice(cut + 20 * 60)];
+  const marks = [rec.marks[0], { ...rec.marks[1], from: rec.marks[1].from - 1200, to: rec.marks[1].to - 1200 }];
+  const f = createFeeder({ ...rec, samples, marks }); f.feedUntil(1e9);
+  const ev = f.tracker.events.find((e) => e.type === 'resume');
+  const ok = ev && ev.headingKept === false;
+  console.log(`\n# transfer with the screen off mid-walk: heading kept = ${ev?.headingKept} → ${ok ? 'OK' : 'FAIL'}`);
   if (!ok) failed++;
 }
 process.exit(failed ? 1 : 0);

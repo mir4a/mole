@@ -31,6 +31,7 @@ let mode = 'idle';          // idle | calibrating | live | replay | done
 let meterWin = [];          // last second of samples for the stability meter
 let calibBuf = [];
 let recal = null;           // { buf, fromRow }
+let resuming = null;        // { buf, fromRow } while calibrating on the next vehicle
 let rec = null;             // current recording { meta, rows, marks }
 let feeder = null, playT = 0;
 let flushTimer = null, flushedRows = 0, chunkIdx = 0;
@@ -159,6 +160,7 @@ function onSample({ tMs, a, r }) {
     if (recal.buf.at(-1).t - recal.buf[0].t >= RECAL_SEC) finishRecal();
     return;
   }
+  if (resuming) return resumeStep(row);
   tracker.push(unpackSample(row));
 }
 
@@ -331,6 +333,47 @@ function finishRecal() {
   toast('Done. The forward direction will be found on the next departure.', 'good');
 }
 
+// ---------------- pause for a transfer ----------------
+$('btn-pause').addEventListener('click', () => {
+  if (mode !== 'live') return;
+  if (tracker.state !== 'paused') {
+    tracker.pause();
+    rec.marks.push({ type: 'pause', at: rec.rows.length });
+    showPauseCard('Paused', `Walk to the next ${vehicleOf(rideKind).noun} with this page open and the screen on: the gyro carries the direction across. Then fix the phone and tap Resume while it stands.`);
+    $('btn-pause').textContent = 'Resume';
+  } else if (!resuming) {
+    resuming = { buf: [], fromRow: rec.rows.length };
+    showPauseCard('Resuming', "Don't touch the phone for 3 seconds…");
+    $('btn-pause').disabled = true;
+  }
+});
+
+function showPauseCard(title, text) {
+  $('pause-card').hidden = false;
+  $('pause-title').textContent = title;
+  $('pause-text').textContent = text;
+}
+
+/** Collects a still 3 s on the new vehicle, then resumes the tracker. */
+function resumeStep(row) {
+  const s = unpackSample(row);
+  resuming.buf.push(s);
+  const buf = resuming.buf;
+  const shaky = buf.length > 10 && (stillStats(buf).stdA > 0.18 || buf.some((x) => x.r && Math.hypot(...x.r) > 12));
+  if (shaky) {
+    resuming = { buf: [], fromRow: rec.rows.length };
+    showPauseCard('Resuming', 'The phone or the vehicle is moving. Starting the 3 seconds again…');
+    return;
+  }
+  if (buf.at(-1).t - buf[0].t < CALIB_SEC) return;
+  tracker.resume(buf);
+  rec.marks.push({ type: 'resume', from: resuming.fromRow, to: rec.rows.length });
+  resuming = null;
+  $('pause-card').hidden = true;
+  $('btn-pause').textContent = 'Pause';
+  $('btn-pause').disabled = false;
+}
+
 // ---------------- ride screen ----------------
 /** Shows the bar buttons that belong to the current phase (data-in="ride done"). */
 function setBarPhase(phase) {
@@ -352,6 +395,11 @@ function enterRide(isReplay, kind = vehicle) {
   ui.done.hidden = true;
   ui.play.hidden = !isReplay;
   setBarPhase('ride');
+  $('btn-pause').hidden = isReplay;
+  $('btn-pause').textContent = 'Pause';
+  $('btn-pause').disabled = false;
+  $('pause-card').hidden = true;
+  resuming = null;
   $('btn-recal').hidden = true;
   if (!scene) {
     scene = new TunnelScene($('view'));
@@ -458,7 +506,7 @@ function showSummary() {
       tr.stops.slice(1).map((st, j) => {
         const k = j + 1, on = confirmed.has(k);
         const when = fmtTime(st.t - tr.stops[0].t);
-        const stood = st.dwell >= 1 ? ` · stood ${Math.round(st.dwell)} s` : '';
+        const stood = st.transfer ? ' · transfer' : st.dwell >= 1 ? ` · stood ${Math.round(st.dwell)} s` : '';
         return `<li><span class="num">${when} into the ride${stood} · ${fmtDist(st.dist ?? 0)} since the last halt</span>` +
           `<button type="button" data-halt="${k}" aria-pressed="${on}">${on ? 'Stop ✓' : 'Stop?'}</button></li>`;
       }).join('') + '</ul>'
@@ -477,7 +525,7 @@ function showSummary() {
     : '';
   if (confirm) {
     let n = 0;
-    scene.setStopLabels(tr.stops.map((st, k) => (k === 0 ? 'start' : confirmed.has(k) ? String(++n) : null)));
+    scene.setStopLabels(tr.stops.map((st, k) => (k === 0 ? 'start' : st.transfer ? 'transfer' : confirmed.has(k) ? String(++n) : null)));
   }
   $('done-profile').innerHTML = elevationProfile(tr);
   $('share-note').textContent = rec
@@ -645,7 +693,21 @@ function handleEvents() {
         toast('That was a jolt, not a departure. The path is unchanged.');
         scene.setLive([]);
         break;
+      case 'pause': {
+        if (ev.closed) scene.addSegment(ev.closed.points, { open: !ev.closed.arrived });
+        scene.setLive([]);
+        scene.setStopLabel(ev.stop.n, 'transfer', ev.stop.p, tracker.psi);
+        if (mode === 'replay') toast('Paused for a transfer');
+        break;
+      }
+      case 'resume':
+        toast(ev.headingKept
+          ? `Resumed after ${fmtTime(ev.walkSec)}. The direction was carried across; the new forward axis comes with the first departure.`
+          : "Resumed, but the screen was off during the walk: the new line's direction is a guess.", ev.headingKept ? 'good' : 'warn', 8000);
+        $('pause-card').hidden = true;
+        break;
       case 'moved':
+        if (tracker.state === 'paused') break; // walking with the phone is expected
         toast('The phone was moved. At the next stop, tap Recalibrate.', 'warn', 9000);
         if (mode === 'live') $('btn-recal').hidden = false;
         break;
@@ -711,7 +773,7 @@ function updateHud() {
   const live = moving && tr.seg ? tr.seg.liveDist : 0;
   ui.dist.textContent = fmtDist(tr.totalDist + live);
   ui.stops.textContent = tr.stops.length - 1;
-  const st = mode === 'done' ? ['Finished', 'stopped'] : recal ? ['Calibrating', 'seeking'] : !moving ? ['Stopped', 'stopped'] : tr.F ? ['Moving', 'moving'] : ['Finding forward', 'seeking'];
+  const st = mode === 'done' ? ['Finished', 'stopped'] : recal || resuming ? ['Calibrating', 'seeking'] : tr.state === 'paused' ? ['Paused', 'seeking'] : !moving ? ['Stopped', 'stopped'] : tr.F ? ['Moving', 'moving'] : ['Finding forward', 'seeking'];
   ui.state.textContent = st[0];
   ui.state.className = 'chip ' + st[1];
   if (mode === 'live' && tr.movedAlert && !moving) $('btn-recal').hidden = false;

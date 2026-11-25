@@ -53,6 +53,21 @@ On synthetic bus rides (`BUS_OPTS` in `js/sim.js`) segment lengths come out
 within about 0–10 %; the worst case is a segment with a hill in the middle,
 because the grade inside a segment is interpolated between the two stops.
 
+## Transfers (Pause / Resume)
+
+Changing lines mid-ride: tap **Pause** at the station, walk to the next train
+with the page open, fix the phone there and tap **Resume** while it stands.
+While paused the phone's attitude is carried by the gyro (with a slow tilt
+correction from gravity), so when the new line's forward axis is learned at
+its first departure, its heading is known in the same frame as the old line.
+On synthetic transfers (a 120° detour on the way, the phone swinging, up to a
+5 min walk) the new line points within ~5° of the truth. If the screen went
+off during the walk, the rotation is lost and the page says the new line's
+direction is a guess. The walking distance and the height change (escalators)
+are not measured: the new line starts where the old one paused, marked
+*transfer*. Pause and resume are stored as marks in the recording, so replays
+reproduce them.
+
 ## Vehicles
 
 Everything that differs between kinds of vehicle lives in `js/vehicles.js`,
