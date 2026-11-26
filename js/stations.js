@@ -2,13 +2,13 @@
 // metro ride: which station each stop is, which way along the line we go, and
 // what a transfer does to the height.
 //
-// The sensors only know distances between stops. The matcher takes a start
-// station (from the last GPS fix before going underground, or picked by hand),
-// decides the direction at the first stop by comparing the measured distance
-// with the straight-line distances to both neighbours, and then walks along
-// the line. A stop much shorter than the gap to the next station is a stop in
-// the tunnel (a red signal): it still resets the speed drift, but isn't a
-// station.
+// The sensors only know distances between stops. The matcher compares them
+// with the straight-line gaps between stations (x 1.1 for curves), from a
+// known start station (the last GPS fix before going underground, or picked
+// by hand) or, without one, from every station at once: the pattern of gaps
+// gives the line away within a few stops. A stop much shorter than the gap to
+// the next station is a stop in the tunnel (a red signal): it still resets the
+// speed drift, but isn't a station.
 
 const R_EARTH = 6371008.8;
 const DEG = Math.PI / 180;
@@ -57,77 +57,158 @@ export class Network {
   }
 }
 
+const TUNNEL_COST = 0.6; // a stop between stations (a red signal) is possible but uncommon
+const STAY_COST = 1.5;   // a pause that isn't a change of line
+const MISS = 1.8;        // more than this share of the gap: a station was passed without stopping
+const BEAM = 600;        // hypotheses kept
+const SURE = 1.0;        // the best answer must beat any different one by this much
+const TURN = 15 * DEG;   // spread of the measured vs. map bearing offset within a line
+const TURN_WALK = 35 * DEG; // ... carried across a transfer walk by the gyro
+const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+
+/**
+ * Which station each stop of a ride is, found from the distances between stops.
+ *
+ * Every hypothesis is a (line, station, direction) the ride could be at, with
+ * a cost: how badly the measured distances fit the station gaps so far
+ * (|log(measured / expected)| per station, plus a cost per stop in a tunnel)
+ * and how badly the drawn shape fits the map: the drawing may be rotated as a
+ * whole, but the angle between drawn and real station-to-station bearings
+ * should stay the same from hop to hop. Pauses (transfers) branch onto the
+ * other lines of the station. With a known
+ * start the hypotheses begin there; without one they begin at every station,
+ * and the pattern of gaps finds the line within a few stops.
+ */
 export class RouteMatcher {
-  /** start: [{ line, index }] candidates (several at a transfer station, or nearby stations). */
-  constructor(net, start) {
+  /** start: [{ line, index }] candidates, or null when the start is unknown. */
+  constructor(net, start = null) {
     this.net = net;
-    this.cands = start.map((c) => ({ line: c.line, index: c.index }));
-    this.dir = null;
-    this.since = 0; // metres since the last station
+    const list = start?.length ? start : Object.entries(net.lines).flatMap(([line, l]) => l.map((_, index) => ({ line, index })));
+    this.hyps = list.map((c) => ({ line: c.line, index: c.index, dir: null, since: 0, cost: 0, labels: [{ line: c.line, index: c.index }], transfers: [], pS: [0, 0], off: null, offSd: TURN }));
+  }
+
+  /** Best hypothesis, and whether it beats every one that disagrees on key(h) by SURE. */
+  pick(key) {
+    const best = this.hyps[0];
+    if (!best) return { best: null, sure: false };
+    const k = key(best);
+    const rival = this.hyps.find((h) => key(h) !== k);
+    return { best, sure: !rival || rival.cost - best.cost >= SURE };
   }
 
   get current() {
-    if (this.cands.length !== 1) return null;
-    const c = this.cands[0];
-    return { ...c, station: this.net.station(c.line, c.index), dir: this.dir };
+    const { best, sure } = this.pick((h) => `${h.line}:${h.index}`);
+    if (!best || !sure) return null;
+    return { line: best.line, index: best.index, station: this.net.station(best.line, best.index), dir: best.dir };
+  }
+
+  label(l) {
+    if (l === null) return { kind: 'tunnel' };
+    const s = this.net.station(l.line, l.index);
+    return { kind: 'station', line: l.line, index: l.index, name: s.name };
   }
 
   /**
-   * A stop after dist metres. Returns { kind: 'station', line, index, name } or
-   * { kind: 'tunnel' } (or { kind: 'unknown' } while the start is unknown).
+   * A stop after dist metres, at p ([x, y] in the drawing, if known). Returns
+   * { kind: 'station', line, index, name }, { kind: 'tunnel' } or
+   * { kind: 'unknown' } (not sure yet).
    */
-  onStop(dist) {
-    if (!this.cands.length) return { kind: 'unknown' };
-    this.since += dist;
-    if (this.dir == null) {
-      // first station: pick the candidate and direction whose gap fits best
-      let best = null;
-      for (const c of this.cands) {
-        for (const dir of [1, -1]) {
-          const g = this.net.gap(c.line, c.index, dir);
-          if (!g) continue;
-          const score = Math.abs(Math.log(this.since / g));
-          if (!best || score < best.score) best = { c, dir, g, score };
+  onStop(dist, p = null) {
+    const out = [];
+    for (const h of this.hyps) {
+      const since = h.since + dist;
+      let tunnel = false;
+      for (const dir of h.dir == null ? [1, -1] : [h.dir]) {
+        const g = this.net.gap(h.line, h.index, dir);
+        if (!g) continue;
+        const r = since / g;
+        if (r < TUNNEL) {
+          if (!tunnel) out.push({ ...h, since, cost: h.cost + TUNNEL_COST, labels: [...h.labels, null] });
+          tunnel = true;
+        } else if (r <= MISS) {
+          let cost = h.cost + Math.abs(Math.log(r)), off = h.off, offSd = h.offSd;
+          if (p && h.pS) {
+            const a = this.net.station(h.line, h.index), b = this.net.station(h.line, h.index + dir);
+            const d = wrap(Math.atan2(p[1] - h.pS[1], p[0] - h.pS[0]) - bearing(a, b));
+            if (off != null) cost += Math.min((wrap(d - off) / offSd) ** 2, 4) / 2;
+            off = off == null ? d : off + wrap(d - off) / 2;
+            offSd = TURN;
+          }
+          out.push({ ...h, index: h.index + dir, dir, since: 0, cost, off, offSd, pS: p, labels: [...h.labels, { line: h.line, index: h.index + dir }] });
         }
       }
-      if (!best || this.since < TUNNEL * best.g) return { kind: 'tunnel' };
-      this.cands = [{ line: best.c.line, index: best.c.index + best.dir }];
-      this.dir = best.dir;
-      this.since = 0;
-      return this.stationResult();
     }
-    const c = this.cands[0];
-    const g = this.net.gap(c.line, c.index, this.dir);
-    if (!g || this.since < TUNNEL * g) return { kind: 'tunnel' };
-    c.index += this.dir;
-    this.since = 0;
-    return this.stationResult();
+    this.hyps = out.length ? prune(out) : this.hyps.map((h) => ({ ...h, since: h.since + dist, cost: h.cost + 2, labels: [...h.labels, null] }));
+    const n = this.hyps[0].labels.length - 1;
+    const { best, sure } = this.pick((h) => JSON.stringify(h.labels[n]));
+    return sure ? this.label(best.labels[n]) : { kind: 'unknown' };
   }
 
-  stationResult() {
-    const c = this.cands[0], s = this.net.station(c.line, c.index);
-    return { kind: 'station', line: c.line, index: c.index, name: s.name };
+  /**
+   * The best reading of the whole ride so far: labels[n] for every stop
+   * ({ kind: 'unknown' } where close rivals disagree) and the transfers all
+   * close rivals agree on ({ at, from, to }).
+   */
+  route() {
+    const best = this.hyps[0];
+    if (!best) return null;
+    const close = this.hyps.filter((h) => h.cost - best.cost < SURE);
+    const key = (l) => (l ? `${l.line}:${l.index}` : '-');
+    const labels = best.labels.map((l, n) => (close.every((h) => key(h.labels[n]) === key(l)) ? (l ? this.label(l) : { kind: 'tunnel' }) : { kind: 'unknown' }));
+    const tk = (t) => `${t.at}>${key(t.to)}`;
+    const transfers = best.transfers
+      .filter((t) => close.every((h) => h.transfers.some((u) => tk(u) === tk(t))))
+      .map((t) => ({ at: t.at, from: { ...t.from, station: this.net.station(t.from.line, t.from.index) }, to: { ...t.to, station: this.net.station(t.to.line, t.to.index) } }));
+    return { labels, transfers };
   }
 
   /**
    * Changing lines at the current station. Returns { from, to, dz } with dz the
    * height change in metres (platform depths below the same ground), or null
-   * when the station isn't a known transfer.
+   * when it isn't clear which line the ride continues on. headingKept: the
+   * gyro carried the direction across the walk.
    */
-  transfer() {
-    const cur = this.current;
-    if (!cur) return null;
-    const others = this.net.byName(cur.station.name).filter((x) => x.line !== cur.line);
-    if (!others.length) return null;
-    const from = { line: cur.line, index: cur.index, station: cur.station };
-    const to = others[0];
-    const toStation = this.net.station(to.line, to.index);
-    const dz = from.station.depth != null && toStation.depth != null ? from.station.depth - toStation.depth : null;
-    this.cands = others.map((o) => ({ line: o.line, index: o.index }));
-    this.dir = null;
-    this.since = 0;
-    return { from, to: { ...to, station: toStation }, dz };
+  transfer(headingKept = true) {
+    const out = [];
+    for (const h0 of this.hyps) {
+      const h = { ...h0, off: headingKept ? h0.off : null, offSd: TURN_WALK };
+      const at = h.labels.length - 1;
+      out.push({ ...h, dir: null, cost: h.cost + STAY_COST });
+      if (h.since > 0) continue; // paused between stations: no change of line
+      const st = this.net.station(h.line, h.index);
+      for (const o of this.net.byName(st.name)) {
+        if (o.line === h.line) continue;
+        out.push({ ...h, line: o.line, index: o.index, dir: null, transfers: [...h.transfers, { at, from: { line: h.line, index: h.index }, to: { line: o.line, index: o.index } }] });
+      }
+    }
+    this.hyps = prune(out);
+    const { best, sure } = this.pick((h) => `${h.line}:${h.index}`);
+    const t = best?.transfers.at(-1);
+    if (!sure || !t || t.at !== best.labels.length - 1) return null;
+    const from = { ...t.from, station: this.net.station(t.from.line, t.from.index) };
+    const to = { ...t.to, station: this.net.station(t.to.line, t.to.index) };
+    const dz = from.station.depth != null && to.station.depth != null ? from.station.depth - to.station.depth : null;
+    return { from, to, dz };
   }
+}
+
+/** Map bearing from a to b (radians, counter-clockwise from east). */
+function bearing(a, b) {
+  return Math.atan2(b.lat - a.lat, (b.lon - a.lon) * Math.cos(((a.lat + b.lat) / 2) * DEG));
+}
+
+/** Cheapest first; one hypothesis per position (the cheaper history wins). */
+function prune(hyps) {
+  hyps.sort((a, b) => a.cost - b.cost);
+  const seen = new Set(), out = [];
+  for (const h of hyps) {
+    const k = `${h.line}:${h.index}:${h.dir}:${Math.round(h.since / 50)}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(h);
+    if (out.length >= BEAM) break;
+  }
+  return out;
 }
 
 let cached = null;

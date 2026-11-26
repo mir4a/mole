@@ -106,7 +106,7 @@ export class TunnelScene {
   }
 
   addSegment(points, opts = {}) {
-    const seg = { points, open: !!opts.open };
+    const seg = { points, open: !!opts.open, from: this.lastStopN() };
     this.segments.push(seg);
     this.buildSegment(seg);
   }
@@ -143,7 +143,7 @@ export class TunnelScene {
 
   /** A vertical link between two platforms at a transfer. */
   addLink(a, b) {
-    const l = { a, b };
+    const l = { a, b, from: this.lastStopN() };
     this.links.push(l);
     this.buildLink(l);
   }
@@ -164,7 +164,19 @@ export class TunnelScene {
 
   /** Relabels all stops at once (index = stop number; 'start' at 0). */
   setStopLabels(labels) {
-    this.stops.forEach((s, i) => { s.label = labels[i]; });
+    this.stops.forEach((s) => { s.label = labels[s.n]; });
+    this.rebuild();
+  }
+
+  lastStopN() { return this.stops.reduce((m, s) => Math.max(m, s.n), 0); }
+
+  /** Turns everything drawn after stop n about point pivot by phi (see Tracker.rotateAfter). */
+  rotateAfter(n, pivot, phi) {
+    const c = Math.cos(phi), s = Math.sin(phi);
+    const rot = (p) => [pivot[0] + c * (p[0] - pivot[0]) - s * (p[1] - pivot[1]), pivot[1] + s * (p[0] - pivot[0]) + c * (p[1] - pivot[1]), p[2]];
+    for (const g of this.segments) if (g.from >= n) g.points = g.points.map(rot);
+    for (const l of this.links) if (l.from > n) { l.a = rot(l.a); l.b = rot(l.b); }
+    for (const st of this.stops) if (st.n > n) { st.p = rot(st.p); st.heading += phi; }
     this.rebuild();
   }
 

@@ -57,6 +57,7 @@ const DEFAULTS = {
   stopAcc: 0.2,       // m/s², horizontal accel allowed at a (level) stop
   slopeAcc: 0.45,     // m/s², allowed when standing on a grade (~4.5 %) ...
   slopeStillSec: 6,   // ... if it lasts this long
+  maxBias: Infinity,  // m/s²: a stop that needs a bigger speed correction was a quiet stretch at speed
   lockSec: 1.5,       // s of strong accel needed to lock the forward axis
   fAcc: 0.3,          // m/s², only stronger horizontal accel teaches the forward axis
   maxPitch: 4.5 * DEG,
@@ -331,6 +332,14 @@ export class Tracker {
     // pitch at the stop, from gravity measured over the quiet window
     const quietSamples = this.win.filter((x) => x.t >= tStop);
     const mA = stillStats(quietSamples.length ? quietSamples : this.win).meanA;
+    if (this.F && !seg.handled && this.notAStop(seg, tStop, mA)) {
+      // Smooth track at speed went quiet (a threshold set by a resume in a
+      // shaky hand, measured on a real ride): standing still here would need
+      // a speed correction no real stop needs. Keep going.
+      this.quietT = this.stillT = this.slopeT = 0;
+      this.events.push({ type: 'notStop', t: tStop });
+      return;
+    }
     this.g0 = mA.slice();
     this.gDev = mA.slice();
     this.upStation = normalize(mA);
@@ -459,6 +468,7 @@ export class Tracker {
       this.stops.push(stop);
     }
     stop.transfer = true;
+    stop.pathLen = this.path.length;
     this.state = 'paused';
     this.seg = null; this.live = []; this.v = 0;
     this.events.push({ type: 'pause', t: this.lastT, closed, stop });
@@ -495,9 +505,52 @@ export class Tracker {
     this.events.push({ type: 'resume', t: this.lastT, headingKept: kept, walkSec: this.lastT - this.walkStart });
   }
 
+  /**
+   * Turns everything after stop n about that stop by phi (rad, about the
+   * vertical): the line after a transfer, once the map shows which way it runs.
+   */
+  rotateAfter(n, phi) {
+    const piv = this.stops[n]?.p;
+    if (!piv || !phi) return;
+    (this.turns ||= []).push({ n, piv: piv.slice(), phi });
+    const rot = (p) => turnAbout(p, piv, phi);
+    const c = Math.cos(phi), s = Math.sin(phi);
+    const turn = (R) => R && [R[0].map((x, i) => c * x - s * R[1][i]), R[0].map((x, i) => s * x + c * R[1][i]), R[2]];
+    for (const st of this.stops) if (st.n > n) st.p = rot(st.p);
+    for (let i = this.stops[n].pathLen ?? this.path.length; i < this.path.length; i++) this.path[i] = rot(this.path[i]);
+    for (const sg of this.segments) if (sg.t0 >= this.stops[n].t) sg.psiEnd += phi;
+    this.pos = rot(this.pos);
+    this.psi += phi;
+    this.live = this.live.map(rot);
+    if (this.seg) { this.seg.p0 = rot(this.seg.p0); this.seg.psi0 += phi; }
+    this.Rlive = turn(this.Rlive);
+    this.walkR = turn(this.walkR);
+    this.walkAtResume = turn(this.walkAtResume);
+  }
+
+  /** Where a point of stop n would be without the turns rotateAfter() made. */
+  rawPos(p, n) {
+    for (const t of [...(this.turns || [])].reverse()) if (n > t.n) p = turnAbout(p, t.piv, -t.phi);
+    return p;
+  }
+
   /** Moves the current position up or down (a transfer to a deeper or shallower platform). */
   shiftElevation(dz) {
     this.pos = [this.pos[0], this.pos[1], this.pos[2] + dz];
+  }
+
+  /** Ending the segment at tStop would need a speed correction beyond maxBias. */
+  notAStop(seg, tStop, mA) {
+    const end = seg.samples.findIndex((x) => x.t >= tStop);
+    const samples = end > 0 ? seg.samples.slice(0, end + 1) : seg.samples;
+    if (samples.length < 2) return false;
+    const lim = Math.min(this.o.maxPitch, this.o.stationPitch ?? Infinity);
+    const r = integrateSegment(samples, {
+      F: this.F, L: this.L, U: this.U0, gMag: this.gMag, rBias: seg.rBias,
+      map: (w) => scale(GYRO_MAPS[this.gyroMap](w), this.gyroSign), p0: seg.p0, psi0: seg.psi0, theta0: seg.theta0, up0: seg.up0,
+      thetaEnd: clamp(Math.asin(clamp(dot(normalize(mA), this.F), -1, 1)), -lim, lim), maxPitch: this.o.maxPitch, vMax: this.o.vMax, step: this.o.pointStep,
+    });
+    return Math.abs(r.bias) > this.o.maxBias;
   }
 
   /** The train was clearly braking within the last 5 s (any 1 s window below -0.35 m/s²). */
@@ -518,6 +571,12 @@ export class Tracker {
 }
 
 // ---------- pure helpers ----------
+
+/** p turned by phi about the vertical through piv. */
+function turnAbout(p, piv, phi) {
+  const c = Math.cos(phi), s = Math.sin(phi), x = p[0] - piv[0], y = p[1] - piv[1];
+  return [piv[0] + c * x - s * y, piv[1] + s * x + c * y, p[2]];
+}
 
 /**
  * Device -> world rotation (rows are the world axes in device coordinates):

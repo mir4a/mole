@@ -137,4 +137,32 @@ for (const [name, o] of [['turn 110°', {}], ['iPhone, turn -70°', { gyroMap: '
   console.log(`\n# stations: Zličín → ${got.at(-1)} (${got.length} stations, a tunnel stop skipped), transfer to ${t?.to.line}, height ${t?.dz?.toFixed(1)} m → ${ok ? 'OK' : 'FAIL'}`);
   if (!ok) failed++;
 }
+// No start station: the line has to come from the gaps and the shape alone.
+// Jinonice -> Můstek (B), one hop on A to Muzeum, C to Florenc, drawn rotated
+// by 40°, with 8 % noise on distances and 6° on bearings; the heading is lost
+// on the first walk.
+{
+  const net = new Network(JSON.parse(fs.readFileSync(new URL('../data/prague.json', import.meta.url))));
+  const D = Math.PI / 180, R = 6371008.8;
+  let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5) * 2;
+  const legs = [['B', 'Jinonice', 'Můstek'], ['A', 'Můstek', 'Muzeum'], ['C', 'Muzeum', 'Florenc']];
+  const m = new RouteMatcher(net, null);
+  let p = [0, 0], rot = 40 * D;
+  legs.forEach(([L, a, b], k) => {
+    if (k > 0) { if (k === 1) rot += 75 * D; m.transfer(k !== 1); }
+    const list = net.lines[L], i0 = list.findIndex((x) => x.name === a), i1 = list.findIndex((x) => x.name === b), dir = i1 > i0 ? 1 : -1;
+    for (let i = i0; i !== i1; i += dir) {
+      const s0 = list[i], s1 = list[i + dir];
+      const e = [(s1.lon - s0.lon) * D * R * Math.cos(s0.lat * D), (s1.lat - s0.lat) * D * R];
+      const th = rot + rnd() * 6 * D, f = 1.1 * (1 + rnd() * 0.08);
+      p = [p[0] + f * (Math.cos(th) * e[0] - Math.sin(th) * e[1]), p[1] + f * (Math.sin(th) * e[0] + Math.cos(th) * e[1])];
+      m.onStop(Math.hypot(e[0], e[1]) * f, p);
+    }
+  });
+  const r = m.route();
+  const names = r?.labels.map((l) => l.name ?? l.kind);
+  const ok = names?.[0] === 'Jinonice' && names?.[6] === 'Můstek' && names?.[7] === 'Muzeum' && names?.at(-1) === 'Florenc' && r.transfers.map((t) => t.to.line).join('') === 'AC';
+  console.log(`\n# stations without a start: ${names?.join(' > ')} → ${ok ? 'OK' : 'FAIL'}`);
+  if (!ok) failed++;
+}
 process.exit(failed ? 1 : 0);

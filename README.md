@@ -62,7 +62,8 @@ correction from gravity), so when the new line's forward axis is learned at
 its first departure, its heading is known in the same frame as the old line.
 On synthetic transfers (a 120° detour on the way, the phone swinging, up to a
 5 min walk) the new line points within ~5° of the truth. If the screen went
-off during the walk, the rotation is lost and the page says the new line's
+off during the walk, the rotation is lost; on the metro the new line is then
+turned to match the map at its first station (see Station data), elsewhere its
 direction is a guess. The walking distance and the height change (escalators)
 are not measured: the new line starts where the old one paused, marked
 *transfer*. Pause and resume are stored as marks in the recording, so replays
@@ -99,16 +100,34 @@ missing. Transfer stations differ a lot between lines (Můstek A 29.3 m / B
 40.3 m, Muzeum A 34 m / C 10 m, Florenc B 39 m / C 9.35 m), which is what a
 transfer needs.
 
-On a metro ride the page names the stops: the start station comes from the
-last GPS fix before going underground (or is picked by hand on the setup
-screen), the direction is chosen at the first stop by comparing the measured
-distance with the gaps to both neighbours, and then the ride walks along the
-line. A stop much shorter than the gap to the next station is a stop in the
-tunnel (a red signal): it still resets the speed drift but isn't a station. At
-a transfer (Pause / Resume) the matcher switches to the station's other line
-and moves the track up or down by the difference in platform depths, drawn as
-a vertical link. On a real ride Jinonice -> Florenc all eight stations came out
-right.
+On a metro ride the page names the stops. The matcher keeps every reading
+of the ride that still fits (which line, which station, which way) and scores
+each one:
+
+- how far each measured stop-to-stop distance is from the expected gap
+  (straight line x 1.1), as |log(measured / expected)|;
+- how well the drawn shape fits the map. The drawing may be rotated as a whole,
+  but the angle between drawn and real station-to-station bearings must stay
+  the same from hop to hop. The sensors measure turns to within ~8°, so this
+  rules out most look-alike gap patterns;
+- a cost for a stop in the tunnel (a red signal: much shorter than the gap; it
+  still resets the speed drift) and for a pause that isn't a change of line.
+
+A start station from the last GPS fix before going underground (or picked by
+hand) narrows the readings from the start. Without one, the page finds the
+line by itself: on the real rides Jinonice -> Florenc and Jinonice -> Můstek ->
+Muzeum -> Florenc, every station was named by the fourth stop without any
+start, and the earlier stops were named afterwards. Names are shown only once
+no reading within a margin disagrees.
+
+At a transfer (Pause / Resume) the readings branch onto the station's other
+lines. The track moves up or down by the difference in platform depths, drawn
+as a vertical link. Once the new line reaches a station, it is turned about the
+transfer so that its stations fall the way the map has them. The rotation of
+the whole drawing is taken from the first line. The walk is where the heading
+is weakest: on the real three-line ride the screen went off on the first walk
+(line A came out 89° off before the turn), and the gyro carried the second walk
+to within 19°.
 
 The same site's technical data also tunes the metro profile: running tracks
 are at most 40 ‰ (so pitch is capped at 2.5°) and station tracks at most 3 ‰

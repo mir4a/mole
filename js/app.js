@@ -235,6 +235,7 @@ let lastFix = null;         // last GPS fix above ground { lat, lon, acc, at }
 let autoStart = null;       // nearest station found from lastFix
 let matcher = null;         // RouteMatcher for the ride on screen
 let stopNames = new Map();  // stop number -> { name, line } | 'tunnel'
+let routeIdx = new Map();   // stop number -> its index in the matcher's labels
 
 async function setupStations(url) {
   network = await loadNetwork(url);
@@ -271,19 +272,84 @@ function startCandidates() {
   return null;
 }
 
+/** A matcher from the start station, or one that finds the line by itself (no start). */
 function makeMatcher(start) {
-  if (!network || !start) return null;
+  if (!network) return null;
+  if (!start) return new RouteMatcher(network, null);
   const list = start.line ? network.byName(start.name).filter((x) => x.line === start.line) : network.byName(start.name);
-  return list.length ? new RouteMatcher(network, list) : null;
+  return new RouteMatcher(network, list.length ? list : null);
 }
 
 /** Names a stop that just happened; returns the label for its marker. */
 function nameStop(stop) {
-  if (!matcher) return undefined;
-  const r = matcher.onStop(stop.dist ?? 0);
+  if (!matcher || routeIdx.has(stop.n)) return undefined;
+  const r = matcher.onStop(stop.dist ?? 0, tracker.rawPos(stop.p, stop.n)); // the shape as measured, before any turn to the map
+  routeIdx.set(stop.n, routeIdx.size);
   if (r.kind === 'station') { stopNames.set(stop.n, { name: r.name, line: r.line }); return r.name; }
   if (r.kind === 'tunnel') { stopNames.set(stop.n, 'tunnel'); return null; }
   return undefined;
+}
+
+/**
+ * Applies the matcher's current reading of the whole ride: names every stop it
+ * is sure of (earlier ones too, once the line is found) and turns each line
+ * after a transfer to run the way the map says.
+ */
+function applyRoute() {
+  const r = matcher?.route();
+  if (!r || !tracker) return;
+  for (const st of tracker.stops) {
+    const l = r.labels[routeIdx.get(st.n)];
+    if (l?.kind === 'station') stopNames.set(st.n, { name: l.name, line: l.line });
+    else if (l?.kind === 'tunnel') stopNames.set(st.n, 'tunnel');
+  }
+  alignLines(r);
+  if (confirmMode()) return;
+  scene.setStopLabels(tracker.stops.map((st) => {
+    const x = stopNames.get(st.n);
+    let t = x === 'tunnel' ? null : x?.name;
+    if (st.transfer) t = t ? `${t} · transfer` : 'transfer';
+    return t;
+  }));
+}
+
+/**
+ * The first line fixes how the drawing sits on the map (a rotation, from its
+ * stations). Each line after a transfer is then turned about the transfer so
+ * its stations fall the way the map has them: the walk between platforms is
+ * where the heading is weakest (the gyro carried it in a hand, or lost it with
+ * the screen off).
+ */
+function alignLines(r) {
+  const D = Math.PI / 180, R = 6371008.8;
+  const enu = (s, o) => [(s.lon - o.lon) * D * R * Math.cos(o.lat * D), (s.lat - o.lat) * D * R];
+  const stationAt = (n) => { const l = r.labels[routeIdx.get(n)]; return l?.kind === 'station' ? network.station(l.line, l.index) : null; };
+  const stops = tracker.stops;
+  const starts = [0, ...stops.filter((s) => s.transfer).map((s) => s.n)];
+  let theta = null;
+  starts.forEach((n0, k) => {
+    const pivot = k === 0 ? stationAt(0) : r.transfers.find((t) => t.at === routeIdx.get(n0))?.to.station;
+    if (!pivot || (k > 0 && theta == null)) return;
+    const end = starts[k + 1] ?? Infinity, p0 = stops[n0].p;
+    let dot = 0, crs = 0;
+    for (const st of stops) {
+      if (st.n <= n0 || st.n > end) continue;
+      const s = stationAt(st.n);
+      if (!s) continue;
+      const m = [st.p[0] - p0[0], st.p[1] - p0[1]];
+      let e = enu(s, pivot);
+      if (k > 0) e = [Math.cos(theta) * e[0] + Math.sin(theta) * e[1], -Math.sin(theta) * e[0] + Math.cos(theta) * e[1]];
+      dot += m[0] * e[0] + m[1] * e[1];
+      crs += m[0] * e[1] - m[1] * e[0];
+    }
+    if (!dot && !crs) return;
+    const phi = Math.atan2(crs, dot);
+    if (k === 0) { theta = phi; return; }
+    if (Math.abs(phi) < 2 * D) return;
+    tracker.rotateAfter(n0, phi);
+    scene.rotateAfter(n0, p0, phi);
+    if (Math.abs(phi) > 15 * D) toast(`Line ${r.transfers.find((t) => t.at === routeIdx.get(n0)).to.line} turned ${Math.round(Math.abs(phi) / D)}° to match the map`, '', 6000);
+  });
 }
 
 function refreshSensorLine() {
@@ -544,6 +610,7 @@ function enterRide(isReplay, kind = vehicle) {
   confirmed = new Set();
   matcher = null;
   stopNames = new Map();
+  routeIdx = new Map();
   $('hud-station').hidden = true;
   $('hud-stops-label').textContent = confirmMode() ? 'halts' : 'stops';
   ui.setup.hidden = true;
@@ -610,6 +677,7 @@ async function finishRide() {
     scene.addSegment(last.points, { open: !last.arrived });
     if (last.arrived) scene.addStop(last.stop.p, last.stop.n, tracker.psi, nameStop(last.stop));
   }
+  applyRoute();
   scene.setLive([]);
   updateGps(true);
   scene.setMode('overview');
@@ -843,6 +911,7 @@ function handleEvents() {
         const s = ev.stop;
         const label = nameStop(s);
         scene.addStop(s.p, s.n, tracker.psi, label);
+        applyRoute();
         scene.setLive([]);
         const how = `${fmtDist(s.dist)} in ${fmtTime(s.dur)}, top ${Math.round(s.vmax * 3.6)} km/h`;
         toast(confirmMode() ? `Halted after ${fmtDist(s.dist)} (${fmtTime(s.dur)}, top ${Math.round(s.vmax * 3.6)} km/h)`
@@ -859,14 +928,16 @@ function handleEvents() {
       case 'pause': {
         if (ev.closed) scene.addSegment(ev.closed.points, { open: !ev.closed.arrived });
         scene.setLive([]);
-        if (ev.closed?.arrived) nameStop(ev.closed.stop);
+        // a pause while still rolling in counts as arriving at the station
+        nameStop(ev.closed?.arrived ? ev.closed.stop : { ...ev.stop, dist: ev.closed ? tracker.segments.at(-1)?.dist : 0 });
         const here = stopNames.get(ev.stop.n);
         scene.setStopLabel(ev.stop.n, here?.name ? `${here.name} · transfer` : 'transfer', ev.stop.p, tracker.psi);
+        applyRoute();
         if (mode === 'replay') toast('Paused for a transfer');
         break;
       }
       case 'resume': {
-        const t = matcher?.transfer();
+        const t = matcher?.transfer(ev.headingKept);
         if (t) {
           const before = tracker.pos.slice();
           if (t.dz != null) { tracker.shiftElevation(t.dz); scene.addLink(before, tracker.pos.slice()); }
@@ -877,7 +948,9 @@ function handleEvents() {
         }
         toast(ev.headingKept
           ? `Resumed after ${fmtTime(ev.walkSec)}. The direction was carried across; the new forward axis comes with the first departure.`
-          : "Resumed, but the screen was off during the walk: the new line's direction is a guess.", ev.headingKept ? 'good' : 'warn', 8000);
+          : matcher
+            ? "Resumed, but the screen was off during the walk: the new line's direction will be taken from the map at the next station."
+            : "Resumed, but the screen was off during the walk: the new line's direction is a guess.", ev.headingKept ? 'good' : 'warn', 8000);
         $('pause-card').hidden = true;
         break;
       }
@@ -919,10 +992,12 @@ requestAnimationFrame(frame);
 /** Sets up station naming for the ride on screen from its start station. */
 async function beginStations(start) {
   const url = rideVehicle().network;
-  if (!url || !start) return;
+  if (!url) return;
   network = await loadNetwork(url);
   matcher = makeMatcher(start);
   if (!matcher) return;
+  routeIdx.set(0, 0);
+  if (!start) return; // the line is found from the gaps between stops
   stopNames.set(0, { name: start.name, line: start.line });
   scene.setStopLabel(0, start.name);
 }

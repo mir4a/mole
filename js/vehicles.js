@@ -45,6 +45,10 @@ export const VEHICLES = {
     tracker: {
       maxPitch: 2.5 * DEG,
       stationPitch: 0.35 * DEG,
+      // real stops need speed corrections of at most ~0.06 m/s² (measured);
+      // a quiet stretch at 50 km/h taken for a stop needed 0.5. Street
+      // vehicles creep in queues, where short hops need big ones, so not there.
+      maxBias: 0.25,
     },
     gps: false,
     stops: 'stations',
