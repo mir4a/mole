@@ -162,6 +162,16 @@
     .start-row label { font-size: 13px; color: var(--muted); }
     .start-row select { font: inherit; color: var(--fg); background: var(--panel-solid); border: 1px solid var(--line); border-radius: 10px; padding: 10px; min-height: 44px; }
     .start-row .status { margin-top: 0; }
+    .model-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 12px; align-items: center; margin-top: 4px; border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+    .model-row canvas { width: 100%; aspect-ratio: 16 / 9; display: block; border-radius: 8px; background: #0f151a; }
+    .model-ctl { display: grid; gap: 8px; min-width: 0; }
+    .model-ctl .row { margin-top: 0; }
+    .model-ctl button { min-height: 38px; padding: 6px 12px; font-size: 13px; }
+    .model-name { font-weight: 600; overflow-wrap: anywhere; }
+    .model-len { font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+    .model-len input { width: 80px; font: inherit; color: var(--fg); background: var(--panel-solid); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+    .model-ctl .status { margin-top: 0; font-size: 13px; }
+    @media (max-width: 420px) { .model-row { grid-template-columns: 1fr; } }
     .done-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
     .done-head button { min-height: 36px; padding: 6px 12px; font-size: 13px; }
   </style>
@@ -180,6 +190,20 @@
       <span class="vehicle-label" id="veh-label">Riding a</span>
       <div class="seg" role="radiogroup" aria-labelledby="veh-label" id="veh-switch"></div>
       <p class="note" data-copy="note">Tuned for trains: smooth runs, gentle curves, level platforms.</p>
+      <div class="model-row">
+        <canvas id="model-preview" aria-label="Preview of the vehicle model"></canvas>
+        <div class="model-ctl">
+          <span id="model-name" class="model-name">Built-in model</span>
+          <div class="row">
+            <button type="button" id="btn-model-load">Load .glb</button>
+            <button type="button" id="btn-model-turn" hidden>Turn 90°</button>
+            <button type="button" id="btn-model-reset" hidden>Use built-in</button>
+          </div>
+          <label class="model-len" id="model-len-row" hidden>Length <input id="model-len" type="number" min="3" max="300" step="0.5" inputmode="decimal"> m</label>
+          <input id="model-file" type="file" accept=".glb,model/gltf-binary" hidden>
+          <span class="status" id="model-status"></span>
+        </div>
+      </div>
     </section>
 
     <ol class="steps">

@@ -176,6 +176,62 @@ export async function loadVehicleModel(spec) {
   for (const h of train.children) { h.position.x -= centre.x; h.position.y -= box.min.y; h.position.z -= centre.z; }
   const out = new THREE.Group();
   out.add(train);
-  out.scale.set(...(spec.scale || [1, 1, 1]));
+  if (spec.length) out.scale.setScalar(spec.length / Math.max(box.max.x - box.min.x, 1e-6)); // to real size, not stretched
+  else out.scale.set(...(spec.scale || [1, 1, 1]));
   return out;
+}
+
+/** A first guess for a new file: its front lies along its longer horizontal axis. */
+export async function guessFront(url) {
+  const size = new THREE.Box3().setFromObject(await loadScene(url)).getSize(new THREE.Vector3());
+  return size.x >= size.z ? '+x' : '+z';
+}
+
+/** Order of the "Turn 90°" button: which way the file's front faces. */
+export const FRONTS = ['+x', '+z', '-x', '-z'];
+
+/**
+ * A small turntable preview on a canvas, with an arrow marking the front.
+ * show(model) frames any model; the turntable spins while the page is visible.
+ */
+export function modelPreview(canvas) {
+  const r = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  r.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  const scene = new THREE.Scene();
+  scene.add(new THREE.HemisphereLight(0xfff1d6, 0x101418, 1.3));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(30, 40, 50); scene.add(sun);
+  const cam = new THREE.PerspectiveCamera(30, 2, 0.1, 2000);
+  const table = new THREE.Group(); scene.add(table);
+  let current = null, raf = 0, fit = null;
+  const frame = () => {
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (w && h && (canvas.width !== Math.round(w * r.getPixelRatio()) || canvas.height !== Math.round(h * r.getPixelRatio()))) {
+      r.setSize(w, h, false); cam.aspect = w / h; cam.updateProjectionMatrix();
+    }
+    if (fit) {
+      // the whole turntable fits whichever way it faces
+      const half = Math.min(cam.fov / 2, Math.atan(Math.tan(cam.fov * Math.PI / 360) * cam.aspect) * 180 / Math.PI) * Math.PI / 180;
+      const d = fit.r / Math.tan(half);
+      cam.position.set(0, fit.y + d * 0.3, d * 0.95);
+      cam.lookAt(0, fit.y, 0);
+    }
+    table.rotation.y += 0.006;
+    r.render(scene, cam);
+    raf = document.hidden ? 0 : requestAnimationFrame(frame);
+  };
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !raf) raf = requestAnimationFrame(frame); });
+  return {
+    show(model) {
+      if (current) table.remove(current);
+      current = new THREE.Group();
+      current.add(model);
+      const box = new THREE.Box3().setFromObject(model), size = box.getSize(new THREE.Vector3());
+      const len = Math.max(size.x, size.z, 1);
+      const arrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(box.max.x + len * 0.04, size.y * 0.5, 0), len * 0.25, 0xffb238, len * 0.08, len * 0.05);
+      current.add(arrow);
+      table.add(current);
+      fit = { r: len * 0.62, y: size.y * 0.45 };
+      if (!raf) raf = requestAnimationFrame(frame);
+    },
+  };
 }

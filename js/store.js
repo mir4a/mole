@@ -1,7 +1,7 @@
 // Rides are saved to IndexedDB in chunks while recording, so a crashed or
 // reloaded tab does not lose the data.
 
-const DB = 'mole', VER = 1;
+const DB = 'mole', VER = 2;
 let dbp = null;
 
 function open() {
@@ -10,9 +10,13 @@ function open() {
     const rq = indexedDB.open(DB, VER);
     rq.onupgradeneeded = () => {
       const db = rq.result;
-      db.createObjectStore('rides', { keyPath: 'id' });
-      const ch = db.createObjectStore('chunks', { keyPath: ['rideId', 'idx'] });
-      ch.createIndex('ride', 'rideId');
+      if (!db.objectStoreNames.contains('rides')) db.createObjectStore('rides', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('chunks')) {
+        const ch = db.createObjectStore('chunks', { keyPath: ['rideId', 'idx'] });
+        ch.createIndex('ride', 'rideId');
+      }
+      // v2: vehicle models the user loaded ({ vehicle, blob, name, front, length })
+      if (!db.objectStoreNames.contains('models')) db.createObjectStore('models', { keyPath: 'vehicle' });
     };
     rq.onsuccess = () => res(rq.result);
     rq.onerror = () => rej(rq.error);
@@ -86,4 +90,25 @@ export async function deleteRide(id) {
     t.objectStore('rides').delete(id);
     for (const k of keys) t.objectStore('chunks').delete(k);
   });
+}
+
+// ---------- user vehicle models ----------
+
+export async function saveModel(m) {
+  try { await tx(['models'], 'readwrite', (t) => t.objectStore('models').put(m)); } catch {}
+}
+
+export async function listModels() {
+  try {
+    const db = await open();
+    return await new Promise((res) => {
+      const rq = db.transaction('models').objectStore('models').getAll();
+      rq.onsuccess = () => res(rq.result);
+      rq.onerror = () => res([]);
+    });
+  } catch { return []; }
+}
+
+export async function deleteModel(vehicle) {
+  try { await tx(['models'], 'readwrite', (t) => t.objectStore('models').delete(vehicle)); } catch {}
 }

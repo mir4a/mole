@@ -124,6 +124,14 @@ vehicle's entry in `js/vehicles.js` can also point at glTF files instead
 (`model: { parts, front, scale }`); they are loaded with three.js' GLTFLoader
 and replace the procedural model once loaded.
 
+Riders can load their own model too: under the vehicle switch, **Load .glb**
+takes a binary glTF file, which is kept in the browser (IndexedDB) and works
+offline. A turntable preview shows it with an orange arrow at the front; **Turn
+90°** fixes a file whose front faces another way, and **Length** scales it
+uniformly to the real size (19 m metro car, 31 m tram, 12 m bus by default).
+A file that doesn't load is dropped and the built-in model is used; **Use
+built-in** goes back to it at any time.
+
 ## Run it
 
 It is a static site with no build step. Sensors need HTTPS (or `localhost`).

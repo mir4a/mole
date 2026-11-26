@@ -257,7 +257,7 @@ export class TunnelScene {
     if (spec?.parts?.length) {
       loadVehicleModel(spec)
         .then((m) => { if (this.vehicleKind === kind) this.putModel(m, false); })
-        .catch(() => {}); // keep the procedural model
+        .catch(() => this.onModelError?.(spec)); // keep the procedural model
     }
   }
 

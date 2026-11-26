@@ -13,6 +13,7 @@
 //                          the speed drift: that is physics, not labelling.
 //   copy       setup-screen texts, keyed by data-copy="..." in index.html
 //   network    station data (js/stations.js) to name the stops, if any
+//   length     real length in metres; a model the user loads is scaled to it
 //   model      optional 3D model files (glTF) laid front to back, which way
 //              their front faces in the file, and the size scale in metres
 //              (length, height, width), e.g. { parts: ['assets/models/x.glb'],
@@ -38,6 +39,7 @@ export const VEHICLES = {
   metro: {
     label: 'Metro',
     noun: 'train',
+    length: 19,
     // Prague metro technical data (metroweb.cz): running tracks at most 40 ‰,
     // station tracks at most 3 ‰, so a stop that seems tilted means the phone moved.
     tracker: {
@@ -67,6 +69,7 @@ export const VEHICLES = {
   tram: {
     label: 'Tram',
     noun: 'tram',
+    length: 31,
     tracker: {
       departAcc: 0.2,
       departHold: 0.35,
@@ -104,6 +107,7 @@ export const VEHICLES = {
   bus: {
     label: 'Bus',
     noun: 'bus',
+    length: 12,
     tracker: {
       departAcc: 0.25,        // an idling engine shakes more than a train at a platform
       departHold: 0.3,

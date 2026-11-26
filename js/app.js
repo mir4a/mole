@@ -6,7 +6,12 @@ import { VEHICLES, vehicleOf, vehicleId } from './vehicles.js';
 import { gpsReference, gpsDistance, gpsSpeed } from './gps.js';
 import { analyzeSensorCheck, poseOf } from './sensorcheck.js';
 import { loadNetwork, RouteMatcher } from './stations.js';
+import { vehicleModel, loadVehicleModel, modelPreview, guessFront, FRONTS } from './models.js';
 import * as store from './store.js';
+
+// Vehicle models the user loaded (see 'vehicle models' below); declared early: setVehicle() runs at start-up.
+const userModels = new Map(); // vehicle -> { vehicle, blob, name, front, length, url }
+let preview = null;
 
 const $ = (id) => document.getElementById(id);
 const CALIB_SEC = 3, RECAL_SEC = 2.5, DEMO_SPEED = 25;
@@ -63,6 +68,7 @@ function setVehicle(v) {
   try { localStorage.setItem('mole.vehicle', vehicle); } catch {}
   for (const b of $('veh-switch').children) b.setAttribute('aria-checked', String(b.dataset.vehicle === vehicle));
   $('start-row').hidden = !vehicleOf(vehicle).network;
+  showModelSetup();
   if (vehicleOf(vehicle).network) setupStations(vehicleOf(vehicle).network);
   const copy = vehicleOf(vehicle).copy;
   for (const el of document.querySelectorAll('[data-copy]')) el.textContent = copy[el.dataset.copy] ?? VEHICLES.metro.copy[el.dataset.copy];
@@ -144,6 +150,85 @@ function askLocation() {
     { enableHighAccuracy: true, timeout: 15000 },
   );
 }
+// ---------------- vehicle models the user loads (.glb), built-in as fallback ----------------
+
+/** The model spec for a vehicle: the user's file if any, else the registry's (if any). */
+function modelSpec(kind) {
+  const m = userModels.get(kind);
+  if (m) return { parts: [m.url], front: m.front, length: m.length, user: true };
+  return vehicleOf(kind).model;
+}
+
+async function showModelSetup() {
+  if (!preview) {
+    try { preview = modelPreview($('model-preview')); } catch { $('model-preview').hidden = true; }
+  }
+  const m = userModels.get(vehicle);
+  $('model-name').textContent = m ? m.name : 'Built-in model';
+  $('btn-model-turn').hidden = $('btn-model-reset').hidden = $('model-len-row').hidden = !m;
+  if (m) $('model-len').value = m.length;
+  setStatus($('model-status'), m ? 'The orange arrow should point to the front.' : `Load a .glb file to use your own ${vehicleOf(vehicle).noun} model.`);
+  if (!preview) return;
+  const kind = vehicle;
+  const spec = modelSpec(kind);
+  if (!spec) return preview.show(vehicleModel(kind));
+  try {
+    const model = await loadVehicleModel(spec);
+    if (kind === vehicle) preview.show(model);
+  } catch {
+    if (kind !== vehicle) return;
+    preview.show(vehicleModel(kind));
+    // a file that doesn't load is not kept: the built-in model stays
+    const m = userModels.get(kind);
+    if (m) { URL.revokeObjectURL(m.url); userModels.delete(kind); await store.deleteModel(kind); }
+    $('model-name').textContent = 'Built-in model';
+    $('btn-model-turn').hidden = $('btn-model-reset').hidden = $('model-len-row').hidden = true;
+    setStatus($('model-status'), `Couldn't read ${m ? m.name : 'this model'}, so the built-in one is used.`, 'bad');
+  }
+}
+
+$('btn-model-load').addEventListener('click', () => $('model-file').click());
+$('model-file').addEventListener('change', async (e) => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  const head = new Uint8Array(await f.slice(0, 4).arrayBuffer());
+  if (String.fromCharCode(...head) !== 'glTF') { setStatus($('model-status'), 'That is not a .glb file (binary glTF). Export the model as .glb.', 'bad'); return; }
+  if (f.size > 30e6) { setStatus($('model-status'), 'The file is over 30 MB; please use a lighter model.', 'bad'); return; }
+  const old = userModels.get(vehicle);
+  if (old) URL.revokeObjectURL(old.url);
+  const url = URL.createObjectURL(f);
+  const m = { vehicle, blob: f, name: f.name, front: await guessFront(url).catch(() => '+x'), length: vehicleOf(vehicle).length };
+  userModels.set(vehicle, { ...m, url });
+  await store.saveModel(m);
+  showModelSetup();
+});
+$('btn-model-turn').addEventListener('click', async () => {
+  const m = userModels.get(vehicle);
+  if (!m) return;
+  m.front = FRONTS[(FRONTS.indexOf(m.front) + 1) % FRONTS.length];
+  await store.saveModel({ vehicle: m.vehicle, blob: m.blob, name: m.name, front: m.front, length: m.length });
+  showModelSetup();
+});
+$('model-len').addEventListener('change', async () => {
+  const m = userModels.get(vehicle), v = parseFloat($('model-len').value);
+  if (!m || !(v >= 3 && v <= 300)) return;
+  m.length = v;
+  await store.saveModel({ vehicle: m.vehicle, blob: m.blob, name: m.name, front: m.front, length: m.length });
+  showModelSetup();
+});
+$('btn-model-reset').addEventListener('click', async () => {
+  const m = userModels.get(vehicle);
+  if (m) URL.revokeObjectURL(m.url);
+  userModels.delete(vehicle);
+  await store.deleteModel(vehicle);
+  showModelSetup();
+});
+store.listModels().then((list) => {
+  for (const m of list) if (m?.blob) userModels.set(m.vehicle, { ...m, url: URL.createObjectURL(m.blob) });
+  showModelSetup();
+});
+
 // ---------------- stations (metro): which stop is which ----------------
 let network = null;         // station data for the current vehicle
 let lastFix = null;         // last GPS fix above ground { lat, lon, acc, at }
@@ -474,13 +559,14 @@ function enterRide(isReplay, kind = vehicle) {
   $('btn-recal').hidden = true;
   if (!scene) {
     scene = new TunnelScene($('view'));
+    scene.onModelError = (spec) => { if (spec?.user) toast("Couldn't load your model, so the built-in one is used.", 'warn'); };
     scene.onModeChange = (m) => { $('btn-view').textContent = m === 'follow' ? 'View: overview' : 'View: follow'; };
   } else {
     scene.clear();
     scene.setMode('follow');
   }
   scene.numberStops = !confirmMode();
-  scene.setVehicle(rideKind, rideVehicle().model);
+  scene.setVehicle(rideKind, modelSpec(rideKind));
   scene.resize();
 }
 
