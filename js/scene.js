@@ -2,7 +2,7 @@
 // stops as platforms. Tracker frame (x fwd, y left, z up) -> three.js (x, y up, -z).
 import * as THREE from '../vendor/three.module.min.js';
 import { OrbitControls } from '../vendor/OrbitControls.js';
-import { vehicleModel } from './models.js';
+import { vehicleModel, loadVehicleModel } from './models.js';
 
 const COLORS = {
   bg: 0x0b0f12, tunnel: 0xffb238, open: 0xb8c4cc, gps: 0x5aa9ff, centre: 0xffd27a, live: 0xf2f5f7,
@@ -245,15 +245,30 @@ export class TunnelScene {
     this.pitch = pitch;
   }
 
-  /** Swaps the vehicle model ('metro' | 'tram' | 'bus'). */
-  setVehicle(kind) {
-    if (this.vehicleKind === kind) return;
+  /**
+   * Swaps the vehicle model. The procedural one shows at once; the model from
+   * files (spec from js/vehicles.js) replaces it when it has loaded.
+   */
+  setVehicle(kind, spec) {
+    if (this.vehicleKind === kind && (this.vehicleSpec === spec || !spec)) return;
     this.vehicleKind = kind;
+    this.vehicleSpec = spec;
+    this.putModel(vehicleModel(kind), true);
+    if (spec?.parts?.length) {
+      loadVehicleModel(spec)
+        .then((m) => { if (this.vehicleKind === kind) this.putModel(m, false); })
+        .catch(() => {}); // keep the procedural model
+    }
+  }
+
+  putModel(model, owned) {
     if (this.model) {
       this.train.remove(this.model);
-      this.model.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
+      // file models share geometry and textures with the loader's cache: keep them
+      if (this.modelOwned) this.model.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
     }
-    this.model = vehicleModel(kind);
+    this.model = model;
+    this.modelOwned = owned;
     this.model.position.y = -1.8; // sit roughly centred in the 3 m tunnel tube
     this.train.add(this.model);
   }

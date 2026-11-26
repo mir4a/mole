@@ -480,7 +480,7 @@ function enterRide(isReplay, kind = vehicle) {
     scene.setMode('follow');
   }
   scene.numberStops = !confirmMode();
-  scene.setVehicle(rideKind);
+  scene.setVehicle(rideKind, rideVehicle().model);
   scene.resize();
 }
 

@@ -1,11 +1,14 @@
 // Offline support: network first (so updates arrive), cache as fallback
 // with a short timeout, because underground the network usually hangs
 // rather than failing fast.
-const CACHE = 'mole-v13';
+const CACHE = 'mole-v14';
 const CORE = [
   './', 'index.html', 'manifest.webmanifest', 'icon.svg',
   'js/app.js', 'js/tracker.js', 'js/sensors.js', 'js/scene.js', 'js/sim.js', 'js/store.js', 'js/gps.js', 'js/sensorcheck.js', 'js/vehicles.js', 'js/stations.js', 'js/models.js', 'data/prague.json',
-  'vendor/three.module.min.js', 'vendor/OrbitControls.js',
+  'vendor/three.module.min.js', 'vendor/OrbitControls.js', 'vendor/GLTFLoader.js', 'vendor/BufferGeometryUtils.js',
+  'assets/models/kenney/train-electric-subway-a.glb', 'assets/models/kenney/train-electric-subway-b.glb',
+  'assets/models/kenney/train-electric-subway-c.glb', 'assets/models/kenney/train-tram-classic.glb',
+  'assets/models/kenney/Textures/colormap.png', 'assets/models/quaternius/bus.glb',
 ];
 
 self.addEventListener('install', (e) => {

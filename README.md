@@ -116,6 +116,17 @@ are at most 40 ‰ (so pitch is capped at 2.5°) and station tracks at most 3 �
 stations, Smíchovské nádraží – Radlická at 2240 m, came out at 2315 m on a
 real ride.
 
+## Vehicle models
+
+The vehicle on screen is a glTF model from `assets/models`, all CC0: the metro
+is the Kenney Train Kit's subway head, two middle sections and tail; the tram is
+two of its classic trams coupled; the bus is Quaternius' LowPoly Public
+Transport bus (converted from OBJ, materials coloured). Each vehicle's entry in
+`js/vehicles.js` lists its files, which way their front faces and the scale to
+metres; swapping in other models is a matter of changing that entry. A
+procedural model (`js/models.js`) shows until the files load, or if they can't.
+The files are cached for offline use.
+
 ## Run it
 
 It is a static site with no build step. Sensors need HTTPS (or `localhost`).
@@ -139,7 +150,8 @@ replayed through the algorithm with *Open recording*.
 - `js/tracker.js`: dead reckoning, stop detection, ZUPT segment correction
 - `js/sim.js`: synthetic metro ride generator (demo and tests)
 - `js/scene.js`: three.js view (tunnel tubes, platforms, follow and orbit cameras)
-- `js/models.js`: low-poly models of a metro car, a tram and a bus (procedural, offline)
+- `js/models.js`: loads the vehicle models (glTF) and builds procedural fallbacks
+- `assets/models/`: CC0 models from Kenney (metro, tram) and Quaternius (bus), see `CREDITS.md`
 - `js/sensors.js`: DeviceMotion, iOS permission, screen wake lock
 - `js/vehicles.js`: per-vehicle tuning, behaviour, texts and demo routes
 - `js/sensorcheck.js`: one-time sensor check (accelerometer sign, gyro axes)

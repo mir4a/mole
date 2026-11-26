@@ -3,6 +3,7 @@
 // y = 0 and is sized in metres, like the rest of the scene. Windows glow so the
 // vehicle reads in a dark tunnel.
 import * as THREE from '../vendor/three.module.min.js';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
 
 const mat = (color, extra = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.25, ...extra });
 const glow = (color, intensity = 1) => new THREE.MeshStandardMaterial({ color: 0x111111, emissive: color, emissiveIntensity: intensity, roughness: 0.3 });
@@ -136,4 +137,45 @@ export function vehicleModel(kind = 'metro') {
   const g = (BUILDERS[kind] || metroCar)();
   g.traverse((o) => { if (o.isMesh) o.castShadow = false; });
   return g;
+}
+
+// ---------- models from files ----------
+
+const loader = new GLTFLoader();
+const scenes = new Map(); // url -> Promise<THREE.Group>
+const FRONT = { '+x': 0, '+z': Math.PI / 2, '-x': Math.PI, '-z': -Math.PI / 2 };
+
+function loadScene(url) {
+  if (!scenes.has(url)) scenes.set(url, loader.loadAsync(url).then((g) => g.scene));
+  return scenes.get(url);
+}
+
+/**
+ * Builds a vehicle from glTF files (spec from js/vehicles.js): each part is
+ * turned to face +x and laid behind the previous one, the whole is centred
+ * on its length with its floor on y = 0 and scaled to metres.
+ */
+export async function loadVehicleModel(spec) {
+  const parts = await Promise.all(spec.parts.map(loadScene));
+  const train = new THREE.Group();
+  let front = 0;
+  for (const src of parts) {
+    const holder = new THREE.Group();
+    const part = src.clone(true);
+    part.rotation.y = FRONT[spec.front] ?? 0;
+    holder.add(part);
+    holder.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(holder);
+    holder.position.x = front - box.max.x;
+    front -= box.max.x - box.min.x;
+    train.add(holder);
+  }
+  train.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(train);
+  const centre = box.getCenter(new THREE.Vector3());
+  for (const h of train.children) { h.position.x -= centre.x; h.position.y -= box.min.y; h.position.z -= centre.z; }
+  const out = new THREE.Group();
+  out.add(train);
+  out.scale.set(...(spec.scale || [1, 1, 1]));
+  return out;
 }
