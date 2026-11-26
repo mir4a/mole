@@ -13,10 +13,11 @@
 //                          the speed drift: that is physics, not labelling.
 //   copy       setup-screen texts, keyed by data-copy="..." in index.html
 //   network    station data (js/stations.js) to name the stops, if any
-//   model      3D model files (glTF, assets/models) laid front to back, which way
+//   model      optional 3D model files (glTF) laid front to back, which way
 //              their front faces in the file, and the size scale in metres
-//              (length, height, width); the procedural model in js/models.js
-//              is shown until they load, or if they can't
+//              (length, height, width), e.g. { parts: ['assets/models/x.glb'],
+//              front: '+z', scale: [1, 1, 1] }. Without it the procedural
+//              model from js/models.js is used
 //   demo       options for simulateRide() (js/sim.js) behind "Demo ride"
 
 const DEG = Math.PI / 180;
@@ -46,12 +47,6 @@ export const VEHICLES = {
     gps: false,
     stops: 'stations',
     network: 'data/prague.json', // station names, order and platform depths
-    // Kenney Train Kit (CC0): head, two middle sections, tail -> a ~21 m car
-    model: {
-      parts: ['train-electric-subway-a', 'train-electric-subway-b', 'train-electric-subway-b', 'train-electric-subway-c'].map((f) => `assets/models/kenney/${f}.glb`),
-      front: '+z',
-      scale: [2, 2, 2],
-    },
     copy: {
       note: 'Tuned for trains: smooth runs, gentle curves, level platforms.',
       openTitle: 'Open this page before you go underground',
@@ -88,12 +83,6 @@ export const VEHICLES = {
     },
     gps: true,
     stops: 'confirm',
-    // Kenney Train Kit (CC0): two classic trams coupled, like a Tatra T3 pair
-    model: {
-      parts: ['assets/models/kenney/train-tram-classic.glb', 'assets/models/kenney/train-tram-classic.glb'],
-      front: '+z',
-      scale: [2.2, 2.2, 2.2],
-    },
     copy: {
       ...streetCopy('tram', 'Trams', 'lurch through junction curves'),
       note: 'Tuned for trams: rails like the metro, but tight street curves, traffic lights and hills. GPS is recorded too, to check the drawn route against it.',
@@ -131,12 +120,6 @@ export const VEHICLES = {
     },
     gps: true,
     stops: 'confirm',
-    // Quaternius LowPoly Public Transport (CC0), stretched to a 12 m city bus
-    model: {
-      parts: ['assets/models/quaternius/bus.glb'],
-      front: '-x',
-      scale: [2.93, 1.7, 1.47],
-    },
     copy: {
       ...streetCopy('bus', 'Buses', 'corner hard'),
       note: 'Tuned for buses: sharp turns, hard braking, stops on hills. GPS is recorded too, to check the drawn route against it.',

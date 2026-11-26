@@ -118,14 +118,11 @@ real ride.
 
 ## Vehicle models
 
-The vehicle on screen is a glTF model from `assets/models`, all CC0: the metro
-is the Kenney Train Kit's subway head, two middle sections and tail; the tram is
-two of its classic trams coupled; the bus is Quaternius' LowPoly Public
-Transport bus (converted from OBJ, materials coloured). Each vehicle's entry in
-`js/vehicles.js` lists its files, which way their front faces and the scale to
-metres; swapping in other models is a matter of changing that entry. A
-procedural model (`js/models.js`) shows until the files load, or if they can't.
-The files are cached for offline use.
+The vehicles on screen are procedural low-poly models built in `js/models.js`
+(a metro car, a three-section tram and a city bus, sized in metres). A
+vehicle's entry in `js/vehicles.js` can also point at glTF files instead
+(`model: { parts, front, scale }`); they are loaded with three.js' GLTFLoader
+and replace the procedural model once loaded.
 
 ## Run it
 
@@ -150,8 +147,7 @@ replayed through the algorithm with *Open recording*.
 - `js/tracker.js`: dead reckoning, stop detection, ZUPT segment correction
 - `js/sim.js`: synthetic metro ride generator (demo and tests)
 - `js/scene.js`: three.js view (tunnel tubes, platforms, follow and orbit cameras)
-- `js/models.js`: loads the vehicle models (glTF) and builds procedural fallbacks
-- `assets/models/`: CC0 models from Kenney (metro, tram) and Quaternius (bus), see `CREDITS.md`
+- `js/models.js`: procedural vehicle models, and loading glTF models when a vehicle names files
 - `js/sensors.js`: DeviceMotion, iOS permission, screen wake lock
 - `js/vehicles.js`: per-vehicle tuning, behaviour, texts and demo routes
 - `js/sensorcheck.js`: one-time sensor check (accelerometer sign, gyro axes)
