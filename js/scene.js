@@ -2,6 +2,7 @@
 // stops as platforms. Tracker frame (x fwd, y left, z up) -> three.js (x, y up, -z).
 import * as THREE from '../vendor/three.module.min.js';
 import { OrbitControls } from '../vendor/OrbitControls.js';
+import { vehicleModel } from './models.js';
 
 const COLORS = {
   bg: 0x0b0f12, tunnel: 0xffb238, open: 0xb8c4cc, gps: 0x5aa9ff, centre: 0xffd27a, live: 0xf2f5f7,
@@ -69,15 +70,15 @@ export class TunnelScene {
     this.gpsMesh = null;
     this.gpsMat = new THREE.MeshBasicMaterial({ color: COLORS.gps, transparent: true, opacity: 0.8 });
 
-    // train marker: a short glowing car body
-    const car = new THREE.Mesh(
-      new THREE.BoxGeometry(20, 3.6, 3),
-      new THREE.MeshStandardMaterial({ color: COLORS.train, emissive: 0xffe2a8, emissiveIntensity: 0.9 })
-    );
-    this.train = car;
-    this.scene.add(car);
+    // the vehicle: a model per kind (js/models.js), with a lamp ahead of it
+    this.train = new THREE.Group();
+    this.train.rotation.order = 'YZX'; // heading, then pitch in the vehicle's frame
+    this.scene.add(this.train);
     const lamp = new THREE.PointLight(0xffc870, 2.5, 140, 1.2);
-    car.add(lamp);
+    lamp.position.set(14, 2, 0);
+    this.train.add(lamp);
+    this.pitch = 0;
+    this.setVehicle('metro');
 
     this.resize = this.resize.bind(this);
     window.addEventListener('resize', this.resize);
@@ -178,7 +179,6 @@ export class TunnelScene {
     const text = label !== undefined ? label : n === 0 ? 'start' : this.numberStops ? String(n) : null;
     if (text) {
       const sprite = makeLabel(text);
-      sprite.scale.multiplyScalar(this.k);
       sprite.position.y *= this.k;
       g.add(sprite);
     } else {
@@ -239,9 +239,23 @@ export class TunnelScene {
     this.scene.add(this.gpsMesh);
   }
 
-  setTrain(pos, heading) {
+  setTrain(pos, heading, pitch = 0) {
     this.trainPos = pos;
     this.heading = heading;
+    this.pitch = pitch;
+  }
+
+  /** Swaps the vehicle model ('metro' | 'tram' | 'bus'). */
+  setVehicle(kind) {
+    if (this.vehicleKind === kind) return;
+    this.vehicleKind = kind;
+    if (this.model) {
+      this.train.remove(this.model);
+      this.model.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
+    }
+    this.model = vehicleModel(kind);
+    this.model.position.y = -1.8; // sit roughly centred in the 3 m tunnel tube
+    this.train.add(this.model);
   }
 
   setAutoRotate(on) { this.controls.autoRotate = on; }
@@ -300,12 +314,16 @@ export class TunnelScene {
     const tp = this.toThree(this.trainPos);
     this.train.position.copy(tp);
     this.train.rotation.y = this.heading;
+    this.train.rotation.z = Math.atan(Math.tan(this.pitch) * this.vex); // drawn with the height exaggeration
     if (this.mode === 'follow') {
-      const back = new THREE.Vector3(-Math.cos(this.heading), 0, Math.sin(this.heading));
-      const want = tp.clone().addScaledVector(back, 140).add(new THREE.Vector3(0, 70, 0));
-      want.addScaledVector(new THREE.Vector3(-back.z, 0, back.x), 40);
-      this.camera.position.lerp(want, 0.15);
-      this.controls.target.lerp(tp, 0.3);
+      // rigidly behind the vehicle (fast replays too); only the view direction is smoothed
+      if (this.camHeading == null) this.camHeading = this.heading;
+      const dh = Math.atan2(Math.sin(this.heading - this.camHeading), Math.cos(this.heading - this.camHeading));
+      this.camHeading += dh * 0.08;
+      const back = new THREE.Vector3(-Math.cos(this.camHeading), 0, Math.sin(this.camHeading));
+      const side = new THREE.Vector3(-back.z, 0, back.x);
+      this.camera.position.copy(tp).addScaledVector(back, 48).addScaledVector(side, 14).add(new THREE.Vector3(0, 20, 0));
+      this.controls.target.copy(tp).addScaledVector(back, -12);
       this.camera.lookAt(this.controls.target);
     } else {
       this.controls.update();
@@ -333,8 +351,9 @@ function makeLabel(text) {
   do { x.font = `600 ${size}px system-ui, sans-serif`; size -= 2; } while (x.measureText(text).width > W - 80 && size > 18);
   x.textAlign = 'center'; x.textBaseline = 'middle';
   x.fillText(text, W / 2, 66);
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, transparent: true }));
-  s.scale.set(48 * (W / 256), 24, 1);
+  // constant size on screen: readable from far away, never a wall of text up close
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, transparent: true, sizeAttenuation: false }));
+  s.scale.set(0.07 * (W / 256), 0.035, 1);
   s.position.y = 22;
   s.renderOrder = 10;
   return s;

@@ -139,6 +139,7 @@ replayed through the algorithm with *Open recording*.
 - `js/tracker.js`: dead reckoning, stop detection, ZUPT segment correction
 - `js/sim.js`: synthetic metro ride generator (demo and tests)
 - `js/scene.js`: three.js view (tunnel tubes, platforms, follow and orbit cameras)
+- `js/models.js`: low-poly models of a metro car, a tram and a bus (procedural, offline)
 - `js/sensors.js`: DeviceMotion, iOS permission, screen wake lock
 - `js/vehicles.js`: per-vehicle tuning, behaviour, texts and demo routes
 - `js/sensorcheck.js`: one-time sensor check (accelerometer sign, gyro axes)
@@ -151,8 +152,6 @@ replayed through the algorithm with *Open recording*.
 
 ## Backlog
 
-- Nice 3D models of a metro car, a tram and a bus for the vehicle marker
-  (procedural three.js geometry, per vehicle in `js/vehicles.js`).
 - Ground elevation over each station (a terrain service, fetched on the phone)
   to pin the whole elevation profile, not only transfers.
 - The walking part of a transfer: steps and heading for the horizontal path.

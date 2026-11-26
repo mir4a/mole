@@ -1,10 +1,10 @@
 // Offline support: network first (so updates arrive), cache as fallback
 // with a short timeout, because underground the network usually hangs
 // rather than failing fast.
-const CACHE = 'mole-v12';
+const CACHE = 'mole-v13';
 const CORE = [
   './', 'index.html', 'manifest.webmanifest', 'icon.svg',
-  'js/app.js', 'js/tracker.js', 'js/sensors.js', 'js/scene.js', 'js/sim.js', 'js/store.js', 'js/gps.js', 'js/sensorcheck.js', 'js/vehicles.js', 'js/stations.js', 'data/prague.json',
+  'js/app.js', 'js/tracker.js', 'js/sensors.js', 'js/scene.js', 'js/sim.js', 'js/store.js', 'js/gps.js', 'js/sensorcheck.js', 'js/vehicles.js', 'js/stations.js', 'js/models.js', 'data/prague.json',
   'vendor/three.module.min.js', 'vendor/OrbitControls.js',
 ];
 

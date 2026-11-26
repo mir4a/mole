@@ -480,6 +480,7 @@ function enterRide(isReplay, kind = vehicle) {
     scene.setMode('follow');
   }
   scene.numberStops = !confirmMode();
+  scene.setVehicle(rideKind);
   scene.resize();
 }
 
@@ -822,7 +823,7 @@ function frame(now) {
     if (tracker.state === 'moving' && mode !== 'done') scene.setLive(tracker.live);
     if (mode !== 'done') updateGps();
     updateStationHud();
-    scene.setTrain(tracker.pos, tracker.psi);
+    scene.setTrain(tracker.pos, tracker.psi, tracker.state === 'moving' ? tracker.theta : 0);
     scene.render();
   }
   requestAnimationFrame(frame);
